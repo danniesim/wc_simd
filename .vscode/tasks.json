@@ -25,6 +25,15 @@
             }
         },
         {
+            "label": "Create IIIF Manifests Table",
+            "type": "shell",
+            "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create --manifests_dir ./data/iiif_manifests",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Start Hadoop Daemons",
             "type": "shell",
             "command": "start-all.sh",

@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from pyspark.sql import SparkSession
 
-import wc_simd.download_iiif_manifests as download_module
+import wc_simd.iiif_manifests as iiif_manifests
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ def test_download_iiif_manifests_creates_files(
             mock_get.return_value = mock_response
 
             # Call the function with a small subset fraction
-            download_module.download_iiif_manifests(
+            iiif_manifests.download_iiif_manifests(
                 subset_fraction=1.0, download_dir=temp_download_dir)
 
             # Check that requests.get was called with the expected URLs
@@ -152,7 +152,7 @@ def test_download_iiif_manifests_error_handling(
             mock_get.side_effect = side_effect
 
             # Call the function - it should not raise an exception
-            download_module.download_iiif_manifests(
+            iiif_manifests.download_iiif_manifests(
                 subset_fraction=1.0, download_dir=temp_download_dir)
 
             # Verify that one file was still created despite the error with the
@@ -170,3 +170,24 @@ def test_download_iiif_manifests_error_handling(
                 os.path.join(
                     temp_download_dir,
                     "test_id_2_manifest2.json")) == 2
+
+
+def test_create_manifest_dataframe():
+    # Create a Spark session
+    spark = SparkSession.builder \
+        .appName("test_pyspark") \
+        .config("spark.driver.memory", "100g") \
+        .config("spark.executor.memory", "100g") \
+        .config("spark.sql.orc.enableVectorizedReader", "false") \
+        .config("spark.sql.parquet.columnarReaderBatchSize", "256") \
+        .config("spark.sql.orc.columnarReaderBatchSize", "256") \
+        .getOrCreate()
+
+    spark.sparkContext.setLogLevel("ERROR")
+
+    df = iiif_manifests.create_manifest_dataframe(
+        spark, manifests_dir="data/iiif_manifests", limit=10)
+
+    df.write.saveAsTable("test_iiif_manifests", mode="overwrite")
+    spark.sql("DROP TABLE IF EXISTS test_iiif_manifests")
+    spark.stop()
