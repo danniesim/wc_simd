@@ -2,6 +2,7 @@
 **/.DS_store
 .venv
 data/iiif_manifests
+data/iiif_manifests.tar.gz
 data/imports/*
 !data/imports/data_import_index.md
 out
