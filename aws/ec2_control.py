@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import sys
 import subprocess
 
 import boto3
 from botocore.exceptions import ClientError, SSOTokenLoadError, TokenRetrievalError
+
+import dotenv
+
+dotenv.load_dotenv()
 
 INSTANCE_IDS = [
     "i-053dc89605578305e",  # Example instance ID
@@ -12,7 +17,7 @@ INSTANCE_IDS = [
 
 DEFAULT_INSTANCE_ID = INSTANCE_IDS[0]
 DEFAULT_REGION = "eu-west-2"
-DEFAULT_PROFILE = "platform-admin"
+DEFAULT_PROFILE = os.getenv("AWS_PROFILE", "default")
 
 
 def is_sso_session_valid(profile=DEFAULT_PROFILE):
@@ -28,13 +33,13 @@ def is_sso_session_valid(profile=DEFAULT_PROFILE):
         return False
 
 
-def perform_sso_login(profile=DEFAULT_PROFILE):
+def perform_sso_login():
     """Perform AWS SSO login."""
     print(
-        f"AWS SSO session is invalid or expired. Initiating login for profile '{profile}'...")
+        f"AWS SSO session is invalid or expired. Initiating login for profile 'default'...")
     try:
         result = subprocess.run(
-            ["aws", "sso", "login", "--profile", profile],
+            ["aws", "sso", "login", "--profile", "default"],
             check=True,
             capture_output=True,
             text=True
@@ -58,7 +63,7 @@ def perform_sso_login(profile=DEFAULT_PROFILE):
 def get_ec2_client(region: str, profile=DEFAULT_PROFILE):
     """Get an EC2 client with valid credentials."""
     if not is_sso_session_valid(profile):
-        if not perform_sso_login(profile):
+        if not perform_sso_login():
             sys.exit(1)
 
     session = boto3.Session(profile_name=profile)
@@ -180,7 +185,7 @@ def main():
 
     # Check if SSO session is valid, if not, perform login
     if not is_sso_session_valid(DEFAULT_PROFILE):
-        if not perform_sso_login(DEFAULT_PROFILE):
+        if not perform_sso_login():
             sys.exit(1)
 
     ec2 = get_ec2_client(args.region, DEFAULT_PROFILE)
