@@ -26,3 +26,5 @@ olmOCR
 Qwen
 cpp
 SGLang
+ita
+frn
