@@ -191,3 +191,32 @@ def test_create_manifest_dataframe():
     df.write.saveAsTable("test_iiif_manifests", mode="overwrite")
     spark.sql("DROP TABLE IF EXISTS test_iiif_manifests")
     spark.stop()
+
+
+def test_create_plain_text_rendering_parquet():
+    # Create a Spark session
+    spark = SparkSession.builder \
+        .appName("test_pyspark") \
+        .config("spark.driver.memory", "100g") \
+        .config("spark.executor.memory", "100g") \
+        .config("spark.sql.orc.enableVectorizedReader", "false") \
+        .config("spark.sql.parquet.columnarReaderBatchSize", "256") \
+        .config("spark.sql.orc.columnarReaderBatchSize", "256") \
+        .getOrCreate()
+
+    spark.sparkContext.setLogLevel("ERROR")
+
+    output_parquet_dir = "data/iiif_manifests/test_plain_text_rendering.parquet"
+
+    if os.path.exists(output_parquet_dir):
+        shutil.rmtree(output_parquet_dir)
+
+    iiif_manifests.create_plain_text_rendering_parquet(
+        spark, output_parquet=output_parquet_dir, limit=10)
+
+    # Assert parquet file exists
+    assert os.path.exists(output_parquet_dir)
+    # Clean up directory
+    shutil.rmtree(output_parquet_dir)
+
+    spark.stop()

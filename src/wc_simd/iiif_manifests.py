@@ -1,5 +1,5 @@
 from pyspark.sql.functions import udf
-from pyspark.sql.types import StringType, StructType, StructField
+from pyspark.sql.types import ArrayType, StructType, StructField, StringType
 import requests
 import os
 from tqdm import tqdm
@@ -160,6 +160,85 @@ def create_manifest_dataframe(spark, manifests_dir: str, limit: int = None):
     return df2
 
 
+def create_plain_text_rendering_parquet(
+        spark, input_table: str = "iiif_manifests",
+        output_parquet: str = "data/iiif_text_plain_renderings.parquet",
+        limit: int = None):
+
+    df = spark.table(input_table)
+
+    # Define the target schema
+    json_schema = ArrayType(
+        StructType([
+            StructField("@id", StringType(), True),
+            StructField("label", StringType(), True),
+            StructField("format", StringType(), True),
+        ])
+    )
+
+    df_flat = (
+        df .withColumn(
+            "seq",
+            F.explode("sequences").alias("seq")) .withColumn(
+            "rendering_structured",
+            F.from_json(
+                F.col("seq.rendering"),
+                json_schema)) .select(
+                    "id",
+            "rendering_structured"))
+
+    # Filter by rendering_structured.format == "text/plain" and Sort by rendering_structured.@id and
+    # take first
+
+    df_flat_first_only = (
+        df_flat
+        .withColumn("rendering_structured", F.explode("rendering_structured"))
+        .where(F.col("rendering_structured.format") == "text/plain")
+        .groupBy("id")
+        .agg(F.collect_list("rendering_structured").alias("rendering_structured"))
+        .withColumn("rendering_structured", F.sort_array(F.col("rendering_structured.@id")))
+        .withColumn("raw_text_url", F.col("rendering_structured")[0])
+        .select("id", "raw_text_url")
+    )
+
+    if limit is not None:
+        df_flat_first_only = df_flat_first_only.limit(limit)
+
+    # Define UDF to download text and return (text, status)
+    def fetch_text(url):
+        if not url:
+            return ("", "empty_url")
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                return (resp.text, "success")
+            elif resp.status_code == 404:
+                return ("", "not_found")
+            else:
+                return ("", f"status_{resp.status_code}")
+        except Exception as e:
+            return ("", "error")
+
+    fetch_text_udf = udf(fetch_text, StructType([
+        StructField("text", StringType(), True),
+        StructField("download_status", StringType(), True)
+    ]))
+
+    df_flat_first_only_with_text = (
+        # df_flat_first_only.sample(False, 0.01)
+        df_flat_first_only
+        .withColumn("fetch_result", fetch_text_udf("raw_text_url"))
+        .withColumn("text", F.col("fetch_result.text"))
+        .withColumn("download_status", F.col("fetch_result.download_status"))
+        .drop("fetch_result")
+    )
+
+    df_flat_first_only_with_text.write.parquet(
+        spark_path(output_parquet),
+        mode="overwrite"
+    )
+
+
 if __name__ == "__main__":
     import argparse
     # Parse command-line arguments
@@ -169,30 +248,43 @@ if __name__ == "__main__":
 
     # Download command
     parser_download = subparsers.add_parser(
-        "download", help="Download IIIF manifests.")
+        "download_manifests", help="Download IIIF manifests.")
     parser_download.add_argument(
         "--subset_fraction", type=float, default=0.01,
         help="Fraction of rows to sample from the works table.")
     parser_download.add_argument("--download_dir", type=str, default=".",
                                  help="Directory to download manifests.")
 
-    # Create command
-    parser_create = subparsers.add_parser(
-        "create", help="Create manifest DataFrame from downloaded manifests.")
-    parser_create.add_argument(
-        "--manifests_dir", type=str, required=True,
+    # Create manifests command
+    parser_create_manifest_table = subparsers.add_parser(
+        "create_manifests_table",
+        help="Create manifest DataFrame from downloaded manifests.")
+    parser_create_manifest_table.add_argument(
+        "--manifests_dir", type=str, default="data/iiif_manifests",
         help="Directory containing IIIF manifest JSON files.")
-    parser_create.add_argument(
+    parser_create_manifest_table.add_argument(
         "--limit", type=int, default=None,
         help="Limit the number of files loaded (for testing).")
 
+    # Create plain text rendering parquet command
+    parser_create_text_renderings_parquet = subparsers.add_parser(
+        "create_plain_text_rendering_parquet",
+        help="Create plain text rendering parquet.")
+    parser_create_text_renderings_parquet.add_argument(
+        "--output_parquet", type=str,
+        default="data/iiif_text_plain_renderings.parquet",
+        help="Output parquet file path.")
+    parser_create_text_renderings_parquet.add_argument(
+        "--limit", type=int, default=None,
+        help="Limit the records to download text for.")
+
     args = parser.parse_args()
 
-    if args.command == "download":
+    if args.command == "download_manifests":
         download_iiif_manifests(
             subset_fraction=args.subset_fraction,
             download_dir=args.download_dir)
-    elif args.command == "create":
+    elif args.command == "create_manifests_table":
         # Print time taken to create the DataFrame
         import time
         start_time = time.time()
@@ -220,4 +312,27 @@ if __name__ == "__main__":
         logging.info("DataFrame created and saved as table 'iiif_manifests'.")
         logging.info(f"Time taken: {time.time() - start_time:.2f} seconds")
         logging.info(f"Count: {spark.table('iiif_manifests').count()}")
+        spark.stop()
+    elif args.command == "create_plain_text_rendering_parquet":
+        # Print time taken to create the DataFrame
+        import time
+        start_time = time.time()
+        logging.info(
+            f"Creating plain text rendering parquet {
+                args.output_parquet}...")
+        # Create a Spark session
+        spark = SparkSession.builder \
+            .appName("test_pyspark") \
+            .config("spark.driver.memory", "100g") \
+            .config("spark.executor.memory", "100g") \
+            .config("spark.sql.orc.enableVectorizedReader", "false") \
+            .config("spark.sql.parquet.columnarReaderBatchSize", "256") \
+            .config("spark.sql.orc.columnarReaderBatchSize", "256") \
+            .getOrCreate()
+        spark.sparkContext.setLogLevel("ERROR")
+        create_plain_text_rendering_parquet(
+            spark, input_table="iiif_manifests",
+            output_parquet=args.output_parquet,
+            limit=args.limit)
+        logging.info(f"Time taken: {time.time() - start_time:.2f} seconds")
         spark.stop()

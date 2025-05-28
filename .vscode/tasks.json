@@ -27,7 +27,16 @@
         {
             "label": "Create IIIF Manifests Table",
             "type": "shell",
-            "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create --manifests_dir ./data/iiif_manifests",
+            "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create_manifests_table --manifests_dir ./data/iiif_manifests",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Create IIIF Text Renderings Parquet",
+            "type": "shell",
+            "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create_plain_text_rendering_parquet --output_parquet ./data/plain_text_rendering.parquet --limit 10",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
