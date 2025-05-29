@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = [{ name = "@danniesim" }]
 readme = "README.md"
-requires-python = ">=3.12 ,<3.13"
+requires-python = "==3.12"
 dependencies = [
     "pyspark (>=3.5.5,<4.0.0)",
     "pytest (>=8.3.5,<9.0.0)",
@@ -34,6 +34,8 @@ dependencies = [
     "sagemaker>=2.244.0",
     "openai>=1.78.1",
     "langchain-openai>=0.3.16",
+    "symspellpy>=6.9.0",
+    "pyarrow>=20.0.0",
 ]
 
 [tool.pdm.dev-dependencies]

@@ -5,6 +5,7 @@ data/iiif_manifests
 data/iiif_manifests.tar.gz
 data/plain_text_rendering.parquet/*
 data/imports/*
+data/tmp/*
 !data/imports/data_import_index.md
 out
 .env
