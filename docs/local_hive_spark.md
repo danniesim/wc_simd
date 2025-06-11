@@ -6,7 +6,7 @@ Follow each section—from bootstrapping Homebrew and formatting HDFS to tuning 
 
 ## Important Notes
 
-For both those configuration files and instructions here, replace `$HOME` with the path of your home folder.
+**For both those configuration files and instructions here, replace `$HOME` with the path of your home folder.**
 
 These instructions largely work for Linux too, just be aware of macOS specific commands and swap accordingly.
 
@@ -123,7 +123,7 @@ Edit `$HADOOP_HOME/etc/hadoop/yarn-site.xml` with:
 - Enable SSH
   - Create `~/.ssh/id_rsa` (if not already present) and run `cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys`. This allows local SSH logins without a password.
   - SSH login permissions is a must: `sudo systemsetup -setremotelogin on`. Test with `ssh localhost` (<https://stackoverflow.com/a/42037840/2844684>)
-  - Edit macOS `hosts` file to point name of localhost (e.g. `macbookhostname`) to `127.0.0.1`
+  - Edit macOS `/etc/hosts` file to point name of localhost (e.g. `macbookhostname`) to `127.0.0.1`
   - Terminal and/or VS Code need Full Disk Access permissions to turn on SSH. Turn them on in System Settings → Privacy & Security → Full Disk Access.
 
 - Format HDFS: `hadoop namenode -format`
@@ -160,7 +160,7 @@ See running Hadoop processes using `jps`. We want to see these (ignore the proce
 ## Hive Configuration
 
 - Go to `$HIVE_HOME/conf`
-- Copy `hive-site.default.xml` to `hive-site.xml`
+- Copy `hive-default.xml.template` to `hive-site.xml`
 - Edit properties in `hive-site.xml` as follows:
 
 ```xml
@@ -253,7 +253,7 @@ See running Hadoop processes using `jps`. We want to see these (ignore the proce
 
 ### Hive Logs
 
-Edit `hive-log4j2.roperties`:
+Edit `hive-log4j2.properties`:
 
 ```conf
 property.hive.log.dir = $HOME/hive_logs
@@ -314,10 +314,9 @@ Edit `$SPARK_HOME/conf/spark-defaults.conf` with:
 spark.sql.catalogImplementation=hive
 ```
 
-Symlink Hadoop and Hive configuration files into Spark's `conf` directory.
+Symlink Hadoop and Hive configuration files into Spark's `$SPARK_HOME/conf` directory.
 
 ```sh
-cd conf
 ln -s $HADOOP_HOME/etc/hadoop/hdfs-site.xml .
 ln -s $HADOOP_HOME/etc/hadoop/core-site.xml .
 ln -s $HIVE_HOME/conf/hive-site.xml .
