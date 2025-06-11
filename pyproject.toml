@@ -36,6 +36,7 @@ dependencies = [
     "langchain-openai>=0.3.16",
     "symspellpy>=6.9.0",
     "pyarrow>=20.0.0",
+    "ipykernel>=6.29.5",
 ]
 
 [tool.pdm.dev-dependencies]
