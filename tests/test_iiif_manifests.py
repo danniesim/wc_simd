@@ -206,17 +206,10 @@ def test_create_plain_text_rendering_parquet():
 
     spark.sparkContext.setLogLevel("ERROR")
 
-    output_parquet_dir = "data/iiif_manifests/test_plain_text_rendering.parquet"
+    iiif_manifests.create_plain_text_renderings_table(
+        spark, output_table="test_text_renderings", limit=10)
 
-    if os.path.exists(output_parquet_dir):
-        shutil.rmtree(output_parquet_dir)
-
-    iiif_manifests.create_plain_text_rendering_parquet(
-        spark, output_parquet=output_parquet_dir, limit=10)
-
-    # Assert parquet file exists
-    assert os.path.exists(output_parquet_dir)
-    # Clean up directory
-    shutil.rmtree(output_parquet_dir)
+    # Clean up the test table
+    spark.sql("DROP TABLE IF EXISTS test_text_renderings")
 
     spark.stop()

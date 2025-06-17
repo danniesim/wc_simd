@@ -160,9 +160,9 @@ def create_manifest_dataframe(spark, manifests_dir: str, limit: int = None):
     return df2
 
 
-def create_plain_text_rendering_parquet(
+def create_plain_text_renderings_table(
         spark, input_table: str = "iiif_manifests",
-        output_parquet: str = "data/iiif_text_plain_renderings.parquet",
+        output_table: str = "plain_text_renderings",
         limit: int = None):
 
     df = spark.table(input_table)
@@ -233,10 +233,8 @@ def create_plain_text_rendering_parquet(
         .drop("fetch_result")
     )
 
-    df_flat_first_only_with_text.write.parquet(
-        spark_path(output_parquet),
-        mode="overwrite"
-    )
+    df_flat_first_only_with_text.write.mode(
+        "overwrite").saveAsTable(output_table)
 
 
 if __name__ == "__main__":
@@ -267,14 +265,14 @@ if __name__ == "__main__":
         help="Limit the number of files loaded (for testing).")
 
     # Create plain text rendering parquet command
-    parser_create_text_renderings_parquet = subparsers.add_parser(
-        "create_plain_text_rendering_parquet",
-        help="Create plain text rendering parquet.")
-    parser_create_text_renderings_parquet.add_argument(
-        "--output_parquet", type=str,
-        default="data/iiif_text_plain_renderings.parquet",
-        help="Output parquet file path.")
-    parser_create_text_renderings_parquet.add_argument(
+    parser_create_text_renderings_table = subparsers.add_parser(
+        "create_plain_text_renderings_tablet",
+        help="Create plain text renderings table.")
+    parser_create_text_renderings_table.add_argument(
+        "--output_table", type=str,
+        default="plain_text_renderings",
+        help="Output table.")
+    parser_create_text_renderings_table.add_argument(
         "--limit", type=int, default=None,
         help="Limit the records to download text for.")
 
@@ -313,13 +311,13 @@ if __name__ == "__main__":
         logging.info(f"Time taken: {time.time() - start_time:.2f} seconds")
         logging.info(f"Count: {spark.table('iiif_manifests').count()}")
         spark.stop()
-    elif args.command == "create_plain_text_rendering_parquet":
+    elif args.command == "create_plain_text_renderings_table":
         # Print time taken to create the DataFrame
         import time
         start_time = time.time()
         logging.info(
-            f"Creating plain text rendering parquet {
-                args.output_parquet}...")
+            f"Creating plain text renderings table {
+                args.output_table}...")
         # Create a Spark session
         spark = SparkSession.builder \
             .appName("test_pyspark") \
@@ -330,9 +328,9 @@ if __name__ == "__main__":
             .config("spark.sql.orc.columnarReaderBatchSize", "256") \
             .getOrCreate()
         spark.sparkContext.setLogLevel("ERROR")
-        create_plain_text_rendering_parquet(
+        create_plain_text_renderings_table(
             spark, input_table="iiif_manifests",
-            output_parquet=args.output_parquet,
+            output_table=args.output_table,
             limit=args.limit)
         logging.info(f"Time taken: {time.time() - start_time:.2f} seconds")
         spark.stop()
