@@ -25,6 +25,14 @@
             }
         },
         {
+            "label": "Download Spacy Model",
+            "type": "shell",
+            "command": "python -m spacy download en_core_web_sm",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        }
+        {
             "label": "Create IIIF Manifests Table",
             "type": "shell",
             "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create_manifests_table --manifests_dir ./data/iiif_manifests",
@@ -34,9 +42,9 @@
             "problemMatcher": []
         },
         {
-            "label": "Create IIIF Text Renderings Parquet",
+            "label": "Create IIIF Text Renderings Table",
             "type": "shell",
-            "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create_plain_text_rendering_parquet --output_parquet ./data/plain_text_rendering.parquet --limit 10",
+            "command": "screen -mS wc_simd python src/wc_simd/iiif_manifests.py create_plain_text_renderings_table --output_table plain_text_renderings",
             "options": {
                 "cwd": "${workspaceFolder}"
             },

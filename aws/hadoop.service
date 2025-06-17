@@ -1,0 +1,14 @@
+[Unit]
+Description=Apache Hadoop
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+ExecStart=/home/ubuntu/hadoop-3.4.1/sbin/start-all.sh
+ExecStop=/home/ubuntu/hadoop-3.4.1/sbin/stop-all.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
