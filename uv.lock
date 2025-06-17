@@ -1,13 +1,10 @@
 version = 1
 revision = 2
-requires-python = "==3.12.*"
+requires-python = "==3.12"
 resolution-markers = [
-    "python_full_version >= '3.12.4' and sys_platform == 'darwin'",
-    "python_full_version >= '3.12.4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version >= '3.12.4' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version >= '3.12.4' and sys_platform != 'darwin' and sys_platform != 'linux')",
-    "python_full_version < '3.12.4' and sys_platform == 'darwin'",
-    "python_full_version < '3.12.4' and platform_machine == 'aarch64' and sys_platform == 'linux'",
-    "(python_full_version < '3.12.4' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.12.4' and sys_platform != 'darwin' and sys_platform != 'linux')",
+    "sys_platform == 'darwin'",
+    "platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')",
 ]
 
 [[package]]
@@ -4209,6 +4206,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "dotenv" },
+    { name = "ipykernel" },
     { name = "langchain" },
     { name = "langchain-aws" },
     { name = "langchain-community" },
@@ -4216,6 +4214,7 @@ dependencies = [
     { name = "langgraph-supervisor" },
     { name = "langsmith" },
     { name = "matplotlib" },
+    { name = "nltk" },
     { name = "notebook" },
     { name = "openai" },
     { name = "oracledb" },
@@ -4243,6 +4242,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "dotenv", specifier = ">=0.9.9,<0.10.0" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "langchain", specifier = ">=0.3.23,<0.4.0" },
     { name = "langchain-aws", specifier = ">=0.2.18,<0.3.0" },
     { name = "langchain-community", specifier = ">=0.3.21,<0.4.0" },
@@ -4250,6 +4250,7 @@ requires-dist = [
     { name = "langgraph-supervisor", specifier = ">=0.0.16,<0.0.17" },
     { name = "langsmith", specifier = ">=0.3.27,<0.4.0" },
     { name = "matplotlib", specifier = ">=3.10.1" },
+    { name = "nltk", specifier = ">=3.9.1" },
     { name = "notebook", specifier = ">=7.3.3,<8.0.0" },
     { name = "openai", specifier = ">=1.78.1" },
     { name = "oracledb", specifier = ">=3.1.0" },

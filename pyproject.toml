@@ -37,6 +37,7 @@ dependencies = [
     "symspellpy>=6.9.0",
     "pyarrow>=20.0.0",
     "ipykernel>=6.29.5",
+    "nltk>=3.9.1",
 ]
 
 [tool.pdm.dev-dependencies]
