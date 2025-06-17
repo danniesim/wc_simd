@@ -1,3 +1,4 @@
+import json
 import os
 
 
@@ -35,3 +36,7 @@ def format_text(text, line_length=80):
     if current_line:
         lines.append(current_line)
     return "\n".join(lines)
+
+
+def print_spark_dataframe_first_as_dict(df):
+    print(json.dumps(df.first().asDict(), indent=4))
