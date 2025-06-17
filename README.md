@@ -40,3 +40,11 @@ This VS Code workspace can be run on a remote EC2 instance. I use a [c5.4xlarge]
 
 Typically, long-running jobs can be run with `screen` which will continue running programs started on the command line even if the SSH connection is gone.
 Once reconnected via SSH, we can retrieve the terminal running the program with `screen -R`. List all terminals with `screen -list`.
+
+## Python Packages Building
+
+### fasttext
+
+```bash
+sudo apt install clang
+```

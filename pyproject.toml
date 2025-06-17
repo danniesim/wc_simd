@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = [{ name = "@danniesim" }]
 readme = "README.md"
-requires-python = "==3.12"
+requires-python = "==3.10.17"
 dependencies = [
     "pyspark (>=3.5.5,<4.0.0)",
     "pytest (>=8.3.5,<9.0.0)",
@@ -38,6 +38,8 @@ dependencies = [
     "pyarrow>=20.0.0",
     "ipykernel>=6.29.5",
     "nltk>=3.9.1",
+    "langdetect>=1.0.9",
+    "fasttext>=0.9.3",
 ]
 
 [tool.pdm.dev-dependencies]
