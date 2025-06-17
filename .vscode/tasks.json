@@ -17,6 +17,30 @@
             "command": "sudo systemsetup -setremotelogin on",
         },
         {
+            "label": "Start EC2 Instance 0",
+            "type": "shell",
+            "command": "python aws/ec2_control.py --select 0 start",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Stop EC2 Instance 0",
+            "type": "shell",
+            "command": "python aws/ec2_control.py --select 0 stop",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "Force Restart EC2 Instance 0",
+            "type": "shell",
+            "command": "python aws/ec2_control.py --select 0 force-restart",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
             "label": "Download Dataset",
             "type": "shell",
             "command": "python src/wc_simd/dataset.py",
