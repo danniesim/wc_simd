@@ -197,8 +197,7 @@ def main():
             print(f"Selected instance: {args.instance_id}")
         else:
             sys.exit(
-                f"Invalid instance index. Choose between 0 and {
-                    len(INSTANCE_IDS) - 1}")
+                f"Invalid instance index. Choose between 0 and {len(INSTANCE_IDS) - 1}")
 
     if args.action == "list":
         list_instances(ec2)
