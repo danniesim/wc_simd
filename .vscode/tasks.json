@@ -15,6 +15,7 @@
             "label": "Enable Remote Login",
             "type": "shell",
             "command": "sudo systemsetup -setremotelogin on",
+            "problemMatcher": []
         },
         {
             "label": "Start EC2 Instance 0",
@@ -22,7 +23,8 @@
             "command": "python aws/ec2_control.py --select 0 start",
             "options": {
                 "cwd": "${workspaceFolder}"
-            }
+            },
+            "problemMatcher": []
         },
         {
             "label": "Stop EC2 Instance 0",
@@ -30,7 +32,8 @@
             "command": "python aws/ec2_control.py --select 0 stop",
             "options": {
                 "cwd": "${workspaceFolder}"
-            }
+            },
+            "problemMatcher": []
         },
         {
             "label": "Force Restart EC2 Instance 0",
@@ -38,7 +41,8 @@
             "command": "python aws/ec2_control.py --select 0 force-restart",
             "options": {
                 "cwd": "${workspaceFolder}"
-            }
+            },
+            "problemMatcher": []
         },
         {
             "label": "Download Dataset",
@@ -46,7 +50,8 @@
             "command": "python src/wc_simd/dataset.py",
             "options": {
                 "cwd": "${workspaceFolder}"
-            }
+            },
+            "problemMatcher": []
         },
         {
             "label": "Download Spacy Model",
@@ -55,7 +60,7 @@
             "options": {
                 "cwd": "${workspaceFolder}"
             }
-        }
+        },
         {
             "label": "Create IIIF Manifests Table",
             "type": "shell",
