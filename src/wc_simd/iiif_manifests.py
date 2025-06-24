@@ -287,8 +287,7 @@ if __name__ == "__main__":
         import time
         start_time = time.time()
         logging.info(
-            f"Creating manifest DataFrame from {
-                args.manifests_dir}...")
+            f"Creating manifest DataFrame from {args.manifests_dir}...")
         # Create a Spark session
         spark = SparkSession.builder \
             .appName("test_pyspark") \
@@ -316,8 +315,7 @@ if __name__ == "__main__":
         import time
         start_time = time.time()
         logging.info(
-            f"Creating plain text renderings table {
-                args.output_table}...")
+            f"Creating plain text renderings table {args.output_table}...")
         # Create a Spark session
         spark = SparkSession.builder \
             .appName("test_pyspark") \
