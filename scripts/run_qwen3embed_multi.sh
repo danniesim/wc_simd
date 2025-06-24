@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# Ref: https://github.com/huggingface/text-embeddings-inference/issues/87
+
 volume=/home/ubuntu/hf_data
 model=Qwen/Qwen3-Embedding-0.6B
 
@@ -9,12 +11,12 @@ docker network create tei-net
 # Start N replicas of the model in detach mode, each on one gpu, each with a different name
 
 for i in $(seq 0 7); do
-    docker run --gpus '"device=$i"' --net tei-net --name tei-$i -v $volume:/data --pull always --rm -d ghcr.io/huggingface/text-embeddings-inference:1.7.2 --model-id $model --dtype float16
+    docker run --gpus '"device='$i'"' --net tei-net --name tei-$i -v $volume:/data --pull always --rm -d ghcr.io/huggingface/text-embeddings-inference:1.7.2 --model-id $model --dtype float16
 done
 
 # Create nginx.conf file
 
-tee -a nginx.conf <<EOF
+cat << 'EOF' | sudo tee "$volume/nginx.conf" > /dev/null
 upstream tei {
     server tei-0;
     server tei-1;
@@ -34,4 +36,4 @@ server {
 EOF
 
 # Start nginx container
-docker run -v $PWD/nginx.conf:/etc/nginx/conf.d/default.conf:ro  -p 8080:80 --net tei-net nginx
+docker run -d -v $volume/nginx.conf:/etc/nginx/conf.d/default.conf:ro  -p 8080:80 --net tei-net --name balancer nginx
