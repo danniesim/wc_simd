@@ -13,7 +13,9 @@ dotenv.load_dotenv()
 
 INSTANCE_IDS = [
     "i-053dc89605578305e",  # Example instance ID
-    "i-0b9d4ff3cf046e312"]
+    "i-0b9d4ff3cf046e312",
+    "i-0addfce1eecfe650f"  # us-east-1, dsim_gpu_8
+    ] 
 
 DEFAULT_INSTANCE_ID = INSTANCE_IDS[0]
 DEFAULT_REGION = "eu-west-2"

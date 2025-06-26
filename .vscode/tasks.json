@@ -2,6 +2,14 @@
     // See https://go.microsoft.com/fwlink/?LinkId=733558
     // for the documentation about the tasks.json format
     "version": "2.0.0",
+    "inputs": [
+        {
+            "id": "ec2_select_id",
+            "description": "EC2 select ID",
+            "type": "promptString",
+            "default": "0"
+        }
+    ],
     "tasks": [
         {
             "label": "Launch Chromium",
@@ -18,27 +26,27 @@
             "problemMatcher": []
         },
         {
-            "label": "Start EC2 Instance 0",
+            "label": "Start EC2 Instance",
             "type": "shell",
-            "command": "python aws/ec2_control.py --select 0 start",
+            "command": "python aws/ec2_control.py --select ${input:ec2_select_id} start",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": []
         },
         {
-            "label": "Stop EC2 Instance 0",
+            "label": "Stop EC2 Instance",
             "type": "shell",
-            "command": "python aws/ec2_control.py --select 0 stop",
+            "command": "python aws/ec2_control.py --select ${input:ec2_select_id} stop",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": []
         },
         {
-            "label": "Force Restart EC2 Instance 0",
+            "label": "Force Restart EC2 Instance",
             "type": "shell",
-            "command": "python aws/ec2_control.py --select 0 force-restart",
+            "command": "python aws/ec2_control.py --select ${input:ec2_select_id} force-restart",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
