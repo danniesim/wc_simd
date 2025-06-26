@@ -127,16 +127,18 @@ class Qwen3Embedding():
 
 
 if __name__ == "__main__":
-    spark = SparkSession.builder \
-        .appName("test_pyspark") \
-        .master("local[32]") \
-        .config("spark.driver.memory", "100g") \
-        .config("spark.executor.memory", "100g") \
-        .config("spark.sql.orc.enableVectorizedReader", "false") \
-        .config("spark.sql.parquet.columnarReaderBatchSize", "256") \
-        .config("spark.sql.orc.columnarReaderBatchSize", "256") \
-        .config("spark.sql.shuffle.partitions", "1024") \
+    spark = (
+        SparkSession.builder
+        .appName("test_pyspark")
+        .master("local[100]")
+        .config("spark.driver.memory", "100g")
+        .config("spark.executor.memory", "100g")
+        .config("spark.sql.orc.enableVectorizedReader", "false")
+        .config("spark.sql.parquet.columnarReaderBatchSize", "256")
+        .config("spark.sql.orc.columnarReaderBatchSize", "256")
+        .config("spark.sql.shuffle.partitions", "1024")
         .getOrCreate()
+    )
 
     spark.sparkContext.setLogLevel("ERROR")
 
@@ -156,7 +158,7 @@ if __name__ == "__main__":
         """
         # Initialize the embedding model
         embeddings_model = Qwen3Embedding(
-            endpoint="http://ec2-18-134-162-140.eu-west-2.compute.amazonaws.com:8080/embed")
+            endpoint="http://ec2-3-231-68-18.compute-1.amazonaws.com:8080/embed")
 
         # Process each DataFrame in the partition
         for df in iterator:
@@ -193,13 +195,33 @@ if __name__ == "__main__":
         # .sample(withReplacement=False, fraction=0.0001, seed=42)
     )
 
-    # Apply the embedding function to the sample
-    sample_embedded_df = chunks_df.mapInPandas(
-        embed_text_partition,
-        schema=embedding_schema
-    )
+    # Get the number of partitions
+    original_partitions = chunks_df.rdd.getNumPartitions()
+    print(f"Original DataFrame has {original_partitions} partitions")
 
-    # sample_embedded_df.show(truncate=False)
+    # Create a list to store DataFrames for each partition
+    partition_dataframes = []
 
-    sample_embedded_df.write.mode("overwrite").saveAsTable(
-        "plain_text_chunks_with_embeddings")
+    # Create a DataFrame for each partition and repartition to 64
+    for i, partition_id in enumerate(range(original_partitions)):
+        # Check if table already exists
+        table_name = f"plain_text_chunks_with_embeddings_{i}"
+        if spark.catalog.tableExists(table_name):
+            print(f"Table {table_name} already exists, skipping...")
+            continue
+
+        # Filter data for this specific partition
+        partition_df = chunks_df.filter(F.spark_partition_id() == partition_id)
+
+        # Repartition to 64 partitions
+        repartitioned_df = partition_df.repartition(64)
+
+        print(
+            f"Created DataFrame for partition {partition_id} with {repartitioned_df.rdd.getNumPartitions()} partitions")
+
+        print(f"Processing partition DataFrame {i}...")
+        embedded_df = repartitioned_df.mapInPandas(
+            embed_text_partition,
+            schema=embedding_schema
+        )
+        embedded_df.write.mode("overwrite").saveAsTable(table_name)
