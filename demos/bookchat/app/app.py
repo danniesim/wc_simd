@@ -190,8 +190,15 @@ def prompt_help_dialog():
     # Suggested prompts
     suggested_prompts = [
         "Are there medical conditions caused by Maple Syrup?",
-        "Famous doctors from the 1900s",
-        "What illness does red wine treat?",
+        "Famous doctors from the 19th century.",
+        "Creatively explore the interrelationships between science and art.",
+        "How was red wine used in medicine pre-1900s?",
+        "How did amputation methods in the 1800s and 1900s differ?",
+        "What are the most common medical conditions in the 1800s?",
+        "How did people treat infections before antibiotics?",
+        "What were the most common surgical procedures in the 19th century?",
+        "How did the understanding of anatomy change in the 1800s?",
+        "What was the role of women in medicine during the 19th century?",
     ]
 
     st.write("Here are some suggested prompts to get you started:")
