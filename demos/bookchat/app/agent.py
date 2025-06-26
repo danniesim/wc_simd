@@ -61,7 +61,7 @@ class QueryRewriteFormat(BaseModel):
 
 def get_llm(
         model_id: str = "eu.anthropic.claude-3-7-sonnet-20250219-v1:0",
-        temperature: float = 0.2) -> ChatBedrock:
+        temperature: float = 0.0) -> ChatBedrock:
     """
 
     Returns a ChatBedrock LLM instance with the specified model ID and parameters.
@@ -178,7 +178,7 @@ PROMPT: {user_prompt}
 # Define the rewrite prompt template
 
 REWRITE_PROMPT_TEMPLATE = \
-    """You are an expert AI assistant working for the Wellcome Collection. Rewrite the user prompt based on the context of the messages for a more relevant vector search query.
+    """You are an expert AI assistant. Rewrite the user prompt the messages as context for a more relevant vector search query.
 
 PROMPT: {user_prompt}
 """
