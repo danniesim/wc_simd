@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 import datetime
 from typing import List, Optional
+from urllib import response
 import streamlit as st
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from bson import ObjectId
@@ -38,8 +39,10 @@ st.session_state["user_id"] = cookies["user_id"]
 @dataclass
 class DocumentChunk:
     _id: str
+    work_id: str
+    chunk_index: int
+    url: str
     text: str
-    embedding: list[float]
     contributor: str
     date: str
 
@@ -60,9 +63,32 @@ def get_document_chunk_by_ids(ids: List[str]) -> List[DocumentChunk]:
     # cursor = document_chunk_collection.find({"_id": {"$in": ids}})
     # return [DocumentChunk(**chunk) for chunk in cursor]
     # PLACEHOLDER
+    es = get_vectorstore()._store.client
 
-    return [DocumentChunk(_id=_id, text="", embedding=[], contributor="", date="")
-            for _id in ids]  # Placeholder for actual implementation
+    response = es.mget(
+        index="vectorsearch_sharded",
+        body={
+            "ids": ids
+        }
+    )
+
+    docs = []
+    for doc in response["docs"]:
+        if doc.get("found", False):
+            work_id, chunk_index = doc["_id"].split("_")
+            url = f"https://wellcomecollection.org/works/{work_id}"
+            text = doc["_source"]["text"]
+            metadata = doc["_source"]["metadata"]
+            docs.append(DocumentChunk(
+                _id=doc["_id"],
+                work_id=work_id,
+                chunk_index=int(chunk_index),
+                url=url,
+                text=text,
+                contributor=metadata.get("contributor", "Unknown"),
+                date=metadata.get("date", "Unknown")
+            ))
+    return docs
 
 
 def get_chat_messages(chat_id) -> List[ChatMessage]:
@@ -134,7 +160,7 @@ def add_chat_message(chat_id, type, content, citations: List[str] = []):
 
 
 @st.cache_resource
-def create_embedder():
+def get_embedder():
     hf = HuggingFaceEmbeddings(
         model_name="Qwen/Qwen3-Embedding-0.6B",
     )
@@ -142,7 +168,7 @@ def create_embedder():
 
 
 @st.cache_resource
-def create_vectorstore():
+def get_vectorstore():
     ES_CLOUD_ID = os.environ.get("ES_CLOUD_ID")
     ES_USERNAME = os.environ.get("ES_USERNAME")
     ES_PASSWORD = os.environ.get("ES_PASSWORD")
@@ -151,7 +177,7 @@ def create_vectorstore():
     db = ElasticsearchStore(
         es_cloud_id=ES_CLOUD_ID,
         index_name="vectorsearch_sharded",
-        embedding=create_embedder(),
+        embedding=get_embedder(),
         es_user=ES_USERNAME,
         es_password=ES_PASSWORD,
         strategy=DenseVectorStrategy(),  # strategy for dense vector search
@@ -164,6 +190,8 @@ def prompt_help_dialog():
     # Suggested prompts
     suggested_prompts = [
         "Are there medical conditions caused by Maple Syrup?",
+        "Famous doctors from the 1900s",
+        "What illness does red wine treat?",
     ]
 
     st.write("Here are some suggested prompts to get you started:")
@@ -188,7 +216,7 @@ def chat_component():
                 with st.expander(str(chunk._id)):
                     st.markdown(f"{chunk.text}")
                     st.markdown(
-                        f"---\n**Contributor**: {chunk.contributor} | **Date**: {chunk.date}")
+                        f"---\n**Contributor**: {chunk.contributor} | **Date**: {chunk.date} | [Link]({chunk.url})")
         else:
             st.markdown("No citations found.")
 
@@ -256,8 +284,8 @@ def chat_component():
             "human", human_prompt)
 
         agent = Agent(
-            vectorstore=create_vectorstore(),
-            embedder=create_embedder()
+            vectorstore=get_vectorstore(),
+            embedder=get_embedder()
         )
 
         response = agent.invoke(
