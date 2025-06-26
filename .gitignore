@@ -14,3 +14,4 @@ out
 **/spark-warehouse
 **/metastore_db
 *.egg-info/
+chromium_user_data

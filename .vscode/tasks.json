@@ -14,10 +14,17 @@
         {
             "label": "Launch Chromium",
             "type": "shell",
-            "command": "chromium --remote-debugging-port=9222 --user-data-dir=remote-debug-profile http://localhost:8501",
+            "command": "chromium --remote-debugging-port=9222 --user-data-dir=chromium_user_data http://localhost:8501",
             "options": {
-                "cwd": "${workspaceFolder}"
-            }
+                "cwd": "${workspaceFolder}",
+                "env": {
+                    "GOOGLE_API_KEY": "no",
+                    "GOOGLE_DEFAULT_CLIENT_ID": "no",
+                    "GOOGLE_DEFAULT_CLIENT_SECRET": "no"
+               }
+            },
+            
+            "problemMatcher": []
         },
         {
             "label": "Enable Remote Login",

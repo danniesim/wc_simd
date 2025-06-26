@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Debug Tests",
+            "type": "debugpy",
+            "request": "launch",
+            "purpose": [
+                "debug-test"
+            ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "redirectOutput": true,
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}",
+                "DEV_MODE": "True"
+            },
+            "cwd": "${workspaceFolder}"
+        },
+        {   
+            "name": "Streamlit: Run App (BookChat)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "console": "integratedTerminal",
+            "env": {
+                "STREAMLIT_SERVER_PORT": "8501",
+                "DEV_MODE": "True",
+                "STREAMLIT_SERVER_HEADLESS": "true"
+            },
+            "args": [
+                "run",
+                "${workspaceFolder}/demos/bookchat/app/app.py"
+            ],
+            "cwd": "${workspaceFolder}/demos/bookchat/app"
+        }
+    ]
+}
