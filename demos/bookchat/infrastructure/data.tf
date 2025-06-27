@@ -17,6 +17,23 @@ variable "controlled_ingress_cidrs" {
   ]
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
+data "aws_iam_policy_document" "app_role_policy" {
+  statement {
+    actions = [
+      "bedrock:InvokeModel",
+      "bedrock:InvokeModelWithResponseStream"
+    ]
+
+    resources = [
+      "arn:aws:bedrock:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:inference-profile/eu.anthropic.claude-3-7-sonnet-20250219-v1:0",
+      "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-7-sonnet-20250219-v1:0"
+    ]
+  }
+}
+
 locals {
   vpc_id                        = data.terraform_remote_state.shared_infra.outputs.developer_vpc_id
   developer_vpc_public_subnets  = data.terraform_remote_state.shared_infra.outputs.developer_vpc_public_subnets
@@ -26,13 +43,22 @@ locals {
 
   secret_env_vars = {
     "PLACEHOLDER_SECRET" = "wc_dsims_bookchat/placeholder"
+    "LANGSMITH_API_KEY"  = "wc_dsims_bookchat/langsmith_api_key"
+    "ES_PASSWORD"        = "wc_dsims_bookchat/es_password"
+    "ES_CLOUD_ID"        = "wc_dsims_bookchat/es_cloud_id"
+    "COOKIE_PASSWORD"    = "wc_dsims_bookchat/cookie_password"
   }
 
   environment_variables = {
-    "PLACEHOLDER" = "value"
+    "PLACEHOLDER"       = "value"
+    "LANGSMITH_TRACING" = "true"
+    "LANGSMITH_PROJECT" = "bookchat"
+    "ES_USERNAME"       = "elastic"
   }
 
   domain = "bookchat.wellcomecollection.org"
+
+  app_role_policy_json = data.aws_iam_policy_document.app_role_policy.json
 
   health_check_path        = "/_stcore/health"
   controlled_ingress_cidrs = var.controlled_ingress_cidrs

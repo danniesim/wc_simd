@@ -265,10 +265,36 @@ def chat_component():
     #         "project_name": {
     #             "$in": filter_list}}
 
+
     if st.session_state.get("user_query_state") is None:
         st.session_state["user_query_state"] = ""
 
+    # --- Show request count for throttle ---
+    now = time_now()
+    if "request_timestamps" not in st.session_state:
+        st.session_state["request_timestamps"] = []
+    one_hour_ago = now - datetime.timedelta(hours=1)
+    recent_requests = [ts for ts in st.session_state["request_timestamps"] if ts > one_hour_ago]
+    request_count = len(recent_requests)
+    st.info(f"Requests this hour: {request_count}/5", icon="⏳")
+
+    import time
     def do_response(human_prompt):
+        # --- Throttle: max 5 requests per hour per user ---
+        now = time_now()
+        if "request_timestamps" not in st.session_state:
+            st.session_state["request_timestamps"] = []
+            
+        # Remove timestamps older than 1 hour
+        one_hour_ago = now - datetime.timedelta(hours=1)
+        st.session_state["request_timestamps"] = [
+            ts for ts in st.session_state["request_timestamps"] if ts > one_hour_ago
+        ]
+        if len(st.session_state["request_timestamps"]) >= 5:
+            st.warning("You have reached the maximum of 5 requests per hour. Please wait before making more requests.")
+            return
+        st.session_state["request_timestamps"].append(now)
+
         rerun = False
         messages: List[BaseMessage] = []
         if not has_chat_messages:
@@ -287,7 +313,7 @@ def chat_component():
             ChatMessage(
                 type="human",
                 content=human_prompt,
-                timestamp=time_now()))
+                timestamp=now))
         messages = messages + [HumanMessage(human_prompt)]
         messages_container.chat_message("human").write(human_prompt)
         # Add user message to history
@@ -366,8 +392,23 @@ def chat_component():
     #              type="tertiary", help="Refresh chat"):
     #     st.rerun()
 
-
 def main():
+    # --- EXPERIMENTAL DISCLAIMER ---
+    st.markdown(
+        """
+        <div style="background-color:#fff3cd; color:#856404; border:2px solid #ffeeba; padding: 1.5em; border-radius: 8px; margin-bottom: 2em; font-size: 1.2em;">
+        <strong>Disclaimer:</strong> <br>
+        <ul>
+        <li>This app is <b>experimental</b> and <b>short-lived</b>.</li>
+        <li>It is only available to users on the <b>Wellcome Collection network</b>.</li>
+        <li>The results are <b>not representative</b> of the organisation's views and may be inaccurate or misleading.</li>
+        <li>Do not rely on the outputs for any official or public communication.</li>
+        </ul>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     with st.sidebar:
         # Create two columns: one for heading, one for logout button
         col_heading, col_logout = st.columns(
@@ -375,8 +416,13 @@ def main():
 
         # Left column: App title
         with col_heading:
-            st.title("Chat with Books")
-            st.subheader("Wellcome Collection")
+            st.title("Book Chat")
+            st.subheader("Semantically search the Wellcome Collection OCR text corpus")
+            st.markdown("""
+            This app allows you to interact with the Wellcome Collection's text corpus using natural language queries.
+            You can ask questions, explore topics, and get answers based on the collection's content.
+            """)
+
 
         # Right column: Logout button
         with col_logout:

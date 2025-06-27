@@ -40,10 +40,11 @@ module "app_container_definition" {
 
 # Create task definition
 module "app_task_definition" {
-  source = "git::https://github.com/wellcomecollection/terraform-aws-ecs-service.git//modules/task_definition?ref=v2.6.3"
+  source = "git::https://github.com/wellcomecollection/terraform-aws-ecs-service.git//modules/task_definition?ref=rk/add-eph-store-var"
 
-  cpu    = 1024
-  memory = 4096
+  cpu                    = 2048
+  memory                 = 8192
+  ephemeral_storage_size = 64
 
   container_definitions = [
     module.log_router_container.container_definition,
@@ -52,6 +53,12 @@ module "app_task_definition" {
 
   launch_types = ["FARGATE"]
   task_name    = local.app_name
+}
+
+resource "aws_iam_role_policy" "app_task_execution_role" {
+  name   = local.app_name
+  role   = module.app_task_definition.task_role_name
+  policy = local.app_role_policy_json
 }
 
 # secrets

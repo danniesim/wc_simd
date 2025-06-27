@@ -1,1 +1,11 @@
 streamlit
+langchain
+langchain_aws
+langchain_elasticsearch
+langchain_huggingface
+bson
+langgraph
+python-dotenv
+elasticsearch
+sentence-transformers
+streamlit-cookies-manager
