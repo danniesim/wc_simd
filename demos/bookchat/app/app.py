@@ -182,7 +182,8 @@ def get_vectorstore():
         embedding=get_embedder(),
         es_user=ES_USERNAME,
         es_password=ES_PASSWORD,
-        strategy=DenseVectorStrategy(),  # strategy for dense vector search
+        strategy=DenseVectorStrategy(),
+        es_params={"verify_certs": False}  # strategy for dense vector search
     )
     return db
 
@@ -265,33 +266,25 @@ def chat_component():
     #         "project_name": {
     #             "$in": filter_list}}
 
-
     if st.session_state.get("user_query_state") is None:
         st.session_state["user_query_state"] = ""
 
-    # --- Show request count for throttle ---
-    now = time_now()
-    if "request_timestamps" not in st.session_state:
-        st.session_state["request_timestamps"] = []
-    one_hour_ago = now - datetime.timedelta(hours=1)
-    recent_requests = [ts for ts in st.session_state["request_timestamps"] if ts > one_hour_ago]
-    request_count = len(recent_requests)
-    st.info(f"Requests this hour: {request_count}/5", icon="⏳")
-
     import time
+
     def do_response(human_prompt):
         # --- Throttle: max 5 requests per hour per user ---
         now = time_now()
         if "request_timestamps" not in st.session_state:
             st.session_state["request_timestamps"] = []
-            
+
         # Remove timestamps older than 1 hour
         one_hour_ago = now - datetime.timedelta(hours=1)
-        st.session_state["request_timestamps"] = [
-            ts for ts in st.session_state["request_timestamps"] if ts > one_hour_ago
-        ]
+        st.session_state["request_timestamps"] = [ts
+                                                  for ts in st.session_state["request_timestamps"]
+                                                  if ts > one_hour_ago]
         if len(st.session_state["request_timestamps"]) >= 5:
-            st.warning("You have reached the maximum of 5 requests per hour. Please wait before making more requests.")
+            st.warning(
+                "You have reached the maximum of 5 requests per hour. Please wait before making more requests.")
             return
         st.session_state["request_timestamps"].append(now)
 
@@ -375,13 +368,21 @@ def chat_component():
             st.rerun()
 
     if len(st.session_state["user_query_state"]) == 0:
+        # --- Show request count for throttle ---
+        now = time_now()
+        if "request_timestamps" not in st.session_state:
+            st.session_state["request_timestamps"] = []
+        one_hour_ago = now - datetime.timedelta(hours=1)
+        recent_requests = [
+            ts for ts in st.session_state["request_timestamps"]
+            if ts > one_hour_ago]
+        request_count = len(recent_requests)
+        st.info(f"Requests this hour: {request_count}/5", icon="⏳")
         if user_query := st.chat_input(
                 key="user_query", placeholder="Type your prompt here..."):
             st.session_state["user_query_state"] = user_query
             st.rerun()
-            do_response(user_query)
-
-    if len(st.session_state["user_query_state"]) > 0:
+    else:
         do_response(st.session_state["user_query_state"])
 
     if st.button('', icon=":material/help:",
@@ -391,6 +392,7 @@ def chat_component():
     # if st.button('', icon=":material/refresh:",
     #              type="tertiary", help="Refresh chat"):
     #     st.rerun()
+
 
 def main():
     # --- EXPERIMENTAL DISCLAIMER ---
@@ -417,12 +419,12 @@ def main():
         # Left column: App title
         with col_heading:
             st.title("Book Chat")
-            st.subheader("Semantically search the Wellcome Collection OCR text corpus")
+            st.subheader(
+                "Semantically search the Wellcome Collection OCR text corpus")
             st.markdown("""
             This app allows you to interact with the Wellcome Collection's text corpus using natural language queries.
             You can ask questions, explore topics, and get answers based on the collection's content.
             """)
-
 
         # Right column: Logout button
         with col_logout:
