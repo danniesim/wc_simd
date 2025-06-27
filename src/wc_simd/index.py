@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     spark = SparkSession.builder \
         .appName("pyspark_index") \
-        .master("local[4]") \
+        .master("local[2]") \
         .config("spark.driver.memory", "32g") \
         .config("spark.executor.memory", "32g") \
         .config("spark.sql.orc.enableVectorizedReader", "false") \
