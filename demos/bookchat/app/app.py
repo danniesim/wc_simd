@@ -63,31 +63,33 @@ def get_document_chunk_by_ids(ids: List[str]) -> List[DocumentChunk]:
     # cursor = document_chunk_collection.find({"_id": {"$in": ids}})
     # return [DocumentChunk(**chunk) for chunk in cursor]
     # PLACEHOLDER
-    es = get_vectorstore()._store.client
-
-    response = es.mget(
-        index="vectorsearch_sharded",
-        body={
-            "ids": ids
-        }
-    )
-
     docs = []
-    for doc in response["docs"]:
-        if doc.get("found", False):
-            work_id, chunk_index = doc["_id"].split("_")
-            url = f"https://wellcomecollection.org/works/{work_id}"
-            text = doc["_source"]["text"]
-            metadata = doc["_source"]["metadata"]
-            docs.append(DocumentChunk(
-                _id=doc["_id"],
-                work_id=work_id,
-                chunk_index=int(chunk_index),
-                url=url,
-                text=text,
-                contributor=metadata.get("contributor", "Unknown"),
-                date=metadata.get("date", "Unknown")
-            ))
+
+    if len(ids) > 0:
+        es = get_vectorstore()._store.client
+
+        response = es.mget(
+            index="vectorsearch_sharded",
+            body={
+                "ids": ids
+            }
+        )
+
+        for doc in response["docs"]:
+            if doc.get("found", False):
+                work_id, chunk_index = doc["_id"].split("_")
+                url = f"https://wellcomecollection.org/works/{work_id}"
+                text = doc["_source"]["text"]
+                metadata = doc["_source"]["metadata"]
+                docs.append(DocumentChunk(
+                    _id=doc["_id"],
+                    work_id=work_id,
+                    chunk_index=int(chunk_index),
+                    url=url,
+                    text=text,
+                    contributor=metadata.get("contributor", "Unknown"),
+                    date=metadata.get("date", "Unknown")
+                ))
     return docs
 
 
@@ -263,6 +265,9 @@ def chat_component():
     #         "project_name": {
     #             "$in": filter_list}}
 
+    if st.session_state.get("user_query_state") is None:
+        st.session_state["user_query_state"] = ""
+
     def do_response(human_prompt):
         rerun = False
         messages: List[BaseMessage] = []
@@ -305,12 +310,17 @@ def chat_component():
         stream_placeholder = response_container.empty()
         # Accumulate streamed text
         full_response = ""
-        # Stream the response
-        for chunk in response:
-            full_response += chunk
-            full_response = html.unescape(full_response).replace("\\n", "\n")
-            stream_placeholder.markdown(full_response + "▌")
 
+        # Show spinner while streaming
+        with st.spinner("Generating response..."):
+            # Stream the response
+            for chunk in response:
+                full_response += chunk
+                full_response = html.unescape(
+                    full_response).replace("\\n", "\n")
+                stream_placeholder.markdown(full_response + "▌")
+
+        st.session_state["user_query_state"] = ""
         stream_placeholder.markdown(full_response)
 
         obj_id_citations = [str(x) for x in agent.last_message_citations]
@@ -334,12 +344,19 @@ def chat_component():
         add_chat_message(
             st.session_state["selected_chat_id"],
             "ai", full_response, obj_id_citations)
+
         if rerun:
             st.rerun()
 
-    if user_query := st.chat_input(
-            key="user_query", placeholder="Type your prompt here..."):
-        do_response(user_query)
+    if len(st.session_state["user_query_state"]) == 0:
+        if user_query := st.chat_input(
+                key="user_query", placeholder="Type your prompt here..."):
+            st.session_state["user_query_state"] = user_query
+            st.rerun()
+            do_response(user_query)
+
+    if len(st.session_state["user_query_state"]) > 0:
+        do_response(st.session_state["user_query_state"])
 
     if st.button('', icon=":material/help:",
                  type="tertiary", help="Prompt suggestions"):

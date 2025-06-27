@@ -162,12 +162,13 @@ class IncrementalAnswerParser:
 GENERATE_PROMPT_TEMPLATE = """You are an expert AI assistant working for the Wellcome Collection with following guidelines.
 
 CORE INSTRUCTIONS:
-- You are doing this as part of a chat with books application
-- The RETRIEVED DOCUMENTS are text from books and articles that have been OCRed by the Wellcome Collection. They are retrieved based on the user query via vectorsearch.
-- Provide clear, concise, and accurate answers
-- Base your response strictly on the provided RETRIEVED DOCUMENTS and messages
-- Ignore the RETRIEVED DOCUMENTS if they are not relevant to the question
-- If information is insufficient, clearly state limitations
+- You are doing this as part of a chat with books application.
+- The RETRIEVED DOCUMENTS are text from books and articles that have been OCRed by the Wellcome Collection.
+- Provide clear, concise, and accurate answers.
+- Base your response strictly on the provided RETRIEVED DOCUMENTS and messages.
+- Ignore the RETRIEVED DOCUMENTS if they are not relevant to the question.
+- If information is insufficient, clearly state limitations.
+- Quote RETRIEVED DOCUMENTS with its CONTRIBUTOR and ID metadata.
 
 RETRIEVED DOCUMENTS:
 {context}
@@ -178,7 +179,7 @@ PROMPT: {user_prompt}
 # Define the rewrite prompt template
 
 REWRITE_PROMPT_TEMPLATE = \
-    """You are an expert AI assistant. Rewrite the user prompt the messages as context for a more relevant vector search query.
+    """You are an expert AI assistant. Rewrite the user prompt using the messages as context for a more relevant vector search query.
 
 PROMPT: {user_prompt}
 """
