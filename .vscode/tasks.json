@@ -111,6 +111,15 @@
                 "cwd": "${workspaceFolder}"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Export requirements.txt",
+            "type": "shell",
+            "command": "uv export --no-hashes --format requirements-txt > requirements.txt",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
         }
     ]
 }
