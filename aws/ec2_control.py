@@ -12,13 +12,14 @@ import dotenv
 dotenv.load_dotenv()
 
 INSTANCE_IDS = [
-    "i-053dc89605578305e",  # Example instance ID
-    "i-0b9d4ff3cf046e312",
-    "i-0addfce1eecfe650f"  # us-east-1, dsim_gpu_8
-    ] 
+    ("i-053dc89605578305e", "eu-west-2"),  # Example instance ID
+    ("i-0b9d4ff3cf046e312", "eu-west-2"),
+    ("i-0addfce1eecfe650f", "us-east-1")  # us-east-1, dsim_gpu_8
+]
 
-DEFAULT_INSTANCE_ID = INSTANCE_IDS[0]
-DEFAULT_REGION = "eu-west-2"
+# Get the instance ID from the first tuple
+DEFAULT_INSTANCE_ID = INSTANCE_IDS[0][0]
+DEFAULT_REGION = INSTANCE_IDS[0][1]  # Get the region from the first tuple
 DEFAULT_PROFILE = os.getenv("AWS_PROFILE", "default")
 
 
@@ -72,11 +73,12 @@ def get_ec2_client(region: str, profile=DEFAULT_PROFILE):
     return session.client("ec2", region_name=region)
 
 
-def list_instances(client):
+def list_instances():
     """List all instances with their indices."""
     print("Available instances:")
-    for idx, instance_id in enumerate(INSTANCE_IDS):
+    for idx, (instance_id, region) in enumerate(INSTANCE_IDS):
         try:
+            client = get_ec2_client(region)
             response = client.describe_instances(InstanceIds=[instance_id])
             instance = response['Reservations'][0]['Instances'][0]
             state = instance['State']['Name']
@@ -85,9 +87,11 @@ def list_instances(client):
                 if tag['Key'] == 'Name':
                     name = tag['Value']
                     break
-            print(f"[{idx}] {instance_id} - {name} ({state})")
+            print(f"[{idx}] {instance_id} ({region}) - {name} ({state})")
         except ClientError as e:
-            print(f"[{idx}] {instance_id} - Error: {e}", file=sys.stderr)
+            print(
+                f"[{idx}] {instance_id} ({region}) - Error: {e}",
+                file=sys.stderr)
     return
 
 
@@ -149,6 +153,53 @@ def force_restart_instance(client, instance_id: str):
         sys.exit(1)
 
 
+def show_instance_states():
+    """Show the current state of all predefined instances with detailed information."""
+    print("Instance States:")
+    print("=" * 80)
+
+    for idx, (instance_id, region) in enumerate(INSTANCE_IDS):
+        try:
+            client = get_ec2_client(region)
+            response = client.describe_instances(InstanceIds=[instance_id])
+            instance = response['Reservations'][0]['Instances'][0]
+            state = instance['State']['Name']
+            state_reason = instance.get(
+                'StateReason', {}).get(
+                'Message', 'N/A')
+            instance_type = instance.get('InstanceType', 'N/A')
+
+            # Get instance name from tags
+            name = "Unnamed"
+            for tag in instance.get('Tags', []):
+                if tag['Key'] == 'Name':
+                    name = tag['Value']
+                    break
+
+            # Get public IP if available
+            public_ip = instance.get('PublicIpAddress', 'N/A')
+            private_ip = instance.get('PrivateIpAddress', 'N/A')
+
+            # Format state with color-like indicators
+            state_indicator = "🟢" if state == "running" else "🔴" if state == "stopped" else "🟡"
+
+            print(f"[{idx}] {instance_id} ({region})")
+            print(f"    Name: {name}")
+            print(f"    State: {state_indicator} {state}")
+            print(f"    Type: {instance_type}")
+            print(f"    Public IP: {public_ip}")
+            print(f"    Private IP: {private_ip}")
+            print(f"    State Reason: {state_reason}")
+            print()
+
+        except ClientError as e:
+            print(f"[{idx}] {instance_id} ({region})")
+            print(f"    Error: {e}")
+            print()
+
+    return
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Start or stop a single EC2 instance and wait for it to change state."
@@ -161,8 +212,9 @@ def parse_args():
             "force-stop",
             "restart",
             "force-restart",
-            "list"],
-        help="Whether to start, stop, force-stop, restart, force-restart the instance, or list available instances",
+            "list",
+            "status"],
+        help="Whether to start, stop, force-stop, restart, force-restart the instance, list available instances, or show detailed status",
     )
     p.add_argument(
         "--instance-id",
@@ -190,19 +242,23 @@ def main():
         if not perform_sso_login():
             sys.exit(1)
 
-    ec2 = get_ec2_client(args.region, DEFAULT_PROFILE)
-
     # Handle --select option
     if args.select is not None:
         if 0 <= args.select < len(INSTANCE_IDS):
-            args.instance_id = INSTANCE_IDS[args.select]
-            print(f"Selected instance: {args.instance_id}")
+            instance_id, region = INSTANCE_IDS[args.select]
+            args.instance_id = instance_id
+            args.region = region
+            print(f"Selected instance: {instance_id} in region {region}")
         else:
             sys.exit(
                 f"Invalid instance index. Choose between 0 and {len(INSTANCE_IDS) - 1}")
 
+    ec2 = get_ec2_client(args.region, DEFAULT_PROFILE)
+
     if args.action == "list":
-        list_instances(ec2)
+        list_instances()
+    elif args.action == "status":
+        show_instance_states()
     elif args.action == "stop":
         stop_instance(ec2, args.instance_id)
     elif args.action == "start":
@@ -216,7 +272,7 @@ def main():
     else:
         # argparse should prevent this
         sys.exit(
-            "Invalid action; choose 'start', 'stop', 'force-stop', 'restart', 'force-restart', or 'list'.")
+            "Invalid action; choose 'start', 'stop', 'force-stop', 'restart', 'force-restart', 'list', or 'status'.")
 
 
 if __name__ == "__main__":

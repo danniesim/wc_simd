@@ -60,6 +60,15 @@
             "problemMatcher": []
         },
         {
+            "label": "Status of all EC2 Instances",
+            "type": "shell",
+            "command": "python aws/ec2_control.py status",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "Download Dataset",
             "type": "shell",
             "command": "python src/wc_simd/dataset.py",

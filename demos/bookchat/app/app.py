@@ -266,10 +266,11 @@ def chat_component():
     #         "project_name": {
     #             "$in": filter_list}}
 
+    # Since project filtering is commented out, set filter to None
+    filter = None
+
     if st.session_state.get("user_query_state") is None:
         st.session_state["user_query_state"] = ""
-
-    import time
 
     def do_response(human_prompt):
         # --- Throttle: max 5 requests per hour per user ---
@@ -339,7 +340,6 @@ def chat_component():
                     full_response).replace("\\n", "\n")
                 stream_placeholder.markdown(full_response + "▌")
 
-        st.session_state["user_query_state"] = ""
         stream_placeholder.markdown(full_response)
 
         obj_id_citations = [str(x) for x in agent.last_message_citations]
@@ -363,6 +363,9 @@ def chat_component():
         add_chat_message(
             st.session_state["selected_chat_id"],
             "ai", full_response, obj_id_citations)
+
+        # Clear the user query state after all processing is complete
+        st.session_state["user_query_state"] = ""
 
         if rerun:
             st.rerun()
