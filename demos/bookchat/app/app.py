@@ -447,6 +447,7 @@ def main():
                               help="Start new chat"):
             try:
                 del st.session_state["selected_chat_id"]
+                st.session_state["messages"] = []
             except KeyError:
                 pass
             st.rerun()
