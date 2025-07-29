@@ -15,3 +15,9 @@ out
 **/metastore_db
 *.egg-info/
 chromium_user_data
+data/dn_blocking_map.csv
+data/dn_labels_blocking_map.parquet
+data/sample_each_type_concept.xlsx
+data/dn_labels_filtered_dedup_result.csv
+data/dn_labels_dedup_data.csv
+data/dn_labels_clustered_dupes.csv
