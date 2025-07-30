@@ -17,7 +17,7 @@
             },
             "cwd": "${workspaceFolder}"
         },
-        {   
+        {
             "name": "Streamlit: Run App (BookChat)",
             "type": "debugpy",
             "request": "launch",
@@ -33,6 +33,49 @@
                 "${workspaceFolder}/demos/bookchat/app/app.py"
             ],
             "cwd": "${workspaceFolder}/demos/bookchat/app"
-        }
+        },
+        {
+            "name": "Dedupe DN Labels Service",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "env": {},
+            "program": "${workspaceFolder}/src/wc_simd/deduper_service.py",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Streamlit: Run App (Dedupe DN Labels)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "console": "integratedTerminal",
+            "env": {
+                "STREAMLIT_SERVER_PORT": "8502",
+                "DEV_MODE": "True",
+                "STREAMLIT_SERVER_HEADLESS": "true"
+            },
+            "args": [
+                "run",
+                "${workspaceFolder}/src/wc_simd/dn_label_train_client.py"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Streamlit: Run App (Dedupe DN Eval)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "console": "integratedTerminal",
+            "env": {
+                "STREAMLIT_SERVER_PORT": "8503",
+                "DEV_MODE": "True",
+                "STREAMLIT_SERVER_HEADLESS": "true"
+            },
+            "args": [
+                "run",
+                "${workspaceFolder}/src/wc_simd/dn_label_eval.py"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }
