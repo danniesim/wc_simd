@@ -35,7 +35,7 @@
         {
             "label": "Start EC2 Instance",
             "type": "shell",
-            "command": "python aws/ec2_control.py --select ${input:ec2_select_id} start",
+            "command": "${command:python.interpreterPath} aws/ec2_control.py --select ${input:ec2_select_id} start",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -44,7 +44,7 @@
         {
             "label": "Stop EC2 Instance",
             "type": "shell",
-            "command": "python aws/ec2_control.py --select ${input:ec2_select_id} stop",
+            "command": "${command:python.interpreterPath} aws/ec2_control.py --select ${input:ec2_select_id} stop",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -53,7 +53,7 @@
         {
             "label": "Force Restart EC2 Instance",
             "type": "shell",
-            "command": "python aws/ec2_control.py --select ${input:ec2_select_id} force-restart",
+            "command": "${command:python.interpreterPath} aws/ec2_control.py --select ${input:ec2_select_id} force-restart",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -62,7 +62,7 @@
         {
             "label": "Status of all EC2 Instances",
             "type": "shell",
-            "command": "python aws/ec2_control.py status",
+            "command": "${command:python.interpreterPath} aws/ec2_control.py status",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -71,7 +71,7 @@
         {
             "label": "Download Dataset",
             "type": "shell",
-            "command": "python src/wc_simd/dataset.py",
+            "command": "${command:python.interpreterPath} src/wc_simd/dataset.py",
             "options": {
                 "cwd": "${workspaceFolder}"
             },
@@ -80,7 +80,7 @@
         {
             "label": "Download Spacy Model",
             "type": "shell",
-            "command": "python -m spacy download en_core_web_sm",
+            "command": "${command:python.interpreterPath} -m spacy download en_core_web_sm",
             "options": {
                 "cwd": "${workspaceFolder}"
             }
