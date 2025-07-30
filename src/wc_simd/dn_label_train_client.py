@@ -12,7 +12,7 @@ SERVICE_URL = "http://localhost:5051"
 
 def call_service(endpoint: str, method: str = "GET",
                  data: Optional[Dict[Any, Any]] = None) -> Dict[Any, Any]:
-    """Make a request to the deduper service"""
+    """Make a request to the Dedupe service"""
     url = f"{SERVICE_URL}/{endpoint}"
 
     try:
@@ -26,7 +26,7 @@ def call_service(endpoint: str, method: str = "GET",
         response.raise_for_status()
         return response.json()
     except requests.exceptions.ConnectionError:
-        st.error("🔌 Cannot connect to deduper service. Please start the service first with: python src/wc_simd/deduper_service.py")
+        st.error("🔌 Cannot connect to Dedupe service. Please start the service first with: python src/wc_simd/dedupe_service.py")
         st.stop()
     except requests.exceptions.RequestException as e:
         st.error(f"Service request failed: {e}")
@@ -42,7 +42,7 @@ def streamlit_label() -> None:
     # Check service health
     health = call_service("health")
     if not health.get("initialized", False):
-        st.error("Deduper service is not properly initialized")
+        st.error("Dedupe service is not properly initialized")
         return
 
     # Initialize session state
@@ -278,10 +278,10 @@ if __name__ == "__main__":
     try:
         stats = call_service("stats")
         st.info(
-            f"📂 Connected to deduper service: {stats['matches']} matches, {stats['distinct']} distinct pairs")
+            f"📂 Connected to Dedupe service: {stats['matches']} matches, {stats['distinct']} distinct pairs")
     except BaseException:
         st.error(
-            "🔌 Cannot connect to deduper service. Please start it first with: python src/wc_simd/deduper_service.py")
+            "🔌 Cannot connect to Dedupe service. Please start it first with: python src/wc_simd/dedupe_service.py")
         st.stop()
 
     # Training section

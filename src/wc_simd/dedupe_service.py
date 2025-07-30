@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Minimal Flask service for deduper operations.
-Handles the heavy lifting of dedupe processing in a separate process.
+Minimal Flask service for Dedupe operations.
+Handles the heavy lifting of Dedupe processing in a separate process.
 """
 
 import dedupe
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Global deduper instance (loaded once on startup)
-deduper = None
+# Global Dedupe instance (loaded once on startup)
+dedupe = None
 train_data = None
 
 # File paths
@@ -31,12 +31,12 @@ fields = [
 ]
 
 
-def initialize_deduper():
-    """Initialize the deduper instance"""
-    global deduper, train_data
+def initialize_dedupe():
+    """Initialize the Dedupe instance"""
+    global dedupe, train_data
 
-    logger.info("Initializing deduper...")
-    deduper = dedupe.Dedupe(fields, num_cores=8)
+    logger.info("Initializing Dedupe...")
+    dedupe = dedupe.Dedupe(fields, num_cores=8)
 
     # Load data
     dedup_data = pd.read_csv(dedup_data_file, index_col=0)
@@ -52,7 +52,7 @@ def initialize_deduper():
         logger.info(f"Loading existing training data from {training_file}")
         with open(training_file, "r") as tf:
             start_time = time.time()
-            deduper.prepare_training(train_data, training_file=tf)
+            dedupe.prepare_training(train_data, training_file=tf)
             duration = time.time() - start_time
             logger.info(
                 f"prepare_training with existing data completed in {duration:.2f} seconds")
@@ -60,27 +60,27 @@ def initialize_deduper():
     else:
         logger.info("No existing training data found, starting fresh")
         start_time = time.time()
-        deduper.prepare_training(train_data)
+        dedupe.prepare_training(train_data)
         duration = time.time() - start_time
         logger.info(f"prepare_training completed in {duration:.2f} seconds")
 
-    logger.info("Deduper initialization complete")
+    logger.info("Dedupe initialization complete")
 
 
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
-    return jsonify({"status": "healthy", "initialized": deduper is not None})
+    return jsonify({"status": "healthy", "initialized": dedupe is not None})
 
 
 @app.route('/stats', methods=['GET'])
 def get_stats():
     """Get training statistics"""
-    if deduper is None:
-        return jsonify({"error": "Deduper not initialized"}), 500
+    if dedupe is None:
+        return jsonify({"error": "Dedupe not initialized"}), 500
 
-    n_match = len(deduper.training_pairs.get("match", []))
-    n_distinct = len(deduper.training_pairs.get("distinct", []))
+    n_match = len(dedupe.training_pairs.get("match", []))
+    n_distinct = len(dedupe.training_pairs.get("distinct", []))
 
     return jsonify({
         "matches": n_match,
@@ -92,12 +92,12 @@ def get_stats():
 @app.route('/uncertain_pair', methods=['GET'])
 def get_uncertain_pair():
     """Get next uncertain pair for labeling"""
-    if deduper is None:
-        return jsonify({"error": "Deduper not initialized"}), 500
+    if dedupe is None:
+        return jsonify({"error": "Dedupe not initialized"}), 500
 
     try:
         # Find an uncertain pair
-        uncertain_pairs = list(deduper.uncertain_pairs())
+        uncertain_pairs = list(dedupe.uncertain_pairs())
         if uncertain_pairs:
             pair = uncertain_pairs[0]  # Get the first available pair
             # Convert pair to serializable format
@@ -120,13 +120,13 @@ def get_uncertain_pair():
 @app.route('/existing_pairs', methods=['GET'])
 def get_existing_pairs():
     """Get all existing labeled pairs"""
-    if deduper is None:
-        return jsonify({"error": "Deduper not initialized"}), 500
+    if dedupe is None:
+        return jsonify({"error": "Dedupe not initialized"}), 500
 
     pairs = []
 
     # Add match pairs
-    for pair in deduper.training_pairs["match"]:
+    for pair in dedupe.training_pairs["match"]:
         record1, record2 = pair
         pairs.append({
             "record1": dict(record1),
@@ -135,7 +135,7 @@ def get_existing_pairs():
         })
 
     # Add distinct pairs
-    for pair in deduper.training_pairs["distinct"]:
+    for pair in dedupe.training_pairs["distinct"]:
         record1, record2 = pair
         pairs.append({
             "record1": dict(record1),
@@ -149,8 +149,8 @@ def get_existing_pairs():
 @app.route('/label_pair', methods=['POST'])
 def label_pair():
     """Label a pair as match/distinct/unsure"""
-    if deduper is None:
-        return jsonify({"error": "Deduper not initialized"}), 500
+    if dedupe is None:
+        return jsonify({"error": "Dedupe not initialized"}), 500
 
     data = request.get_json()
     if not data:
@@ -172,7 +172,7 @@ def label_pair():
         else:
             examples[label].append(record_pair)
 
-        deduper.mark_pairs(examples)
+        dedupe.mark_pairs(examples)
 
         return jsonify(
             {"success": True, "message": f"Pair labeled as {label}"})
@@ -185,8 +185,8 @@ def label_pair():
 @app.route('/remove_pair', methods=['POST'])
 def remove_pair():
     """Remove a pair from training data"""
-    if deduper is None:
-        return jsonify({"error": "Deduper not initialized"}), 500
+    if dedupe is None:
+        return jsonify({"error": "Dedupe not initialized"}), 500
 
     data = request.get_json()
     if not data:
@@ -200,13 +200,13 @@ def remove_pair():
         original_label = None
 
         # Check in match pairs
-        if record_pair in deduper.training_pairs["match"]:
-            deduper.training_pairs["match"].remove(record_pair)
+        if record_pair in dedupe.training_pairs["match"]:
+            dedupe.training_pairs["match"].remove(record_pair)
             original_label = "match"
 
         # Check in distinct pairs
-        if record_pair in deduper.training_pairs["distinct"]:
-            deduper.training_pairs["distinct"].remove(record_pair)
+        if record_pair in dedupe.training_pairs["distinct"]:
+            dedupe.training_pairs["distinct"].remove(record_pair)
             original_label = "distinct"
 
         return jsonify(
@@ -222,12 +222,12 @@ def remove_pair():
 @app.route('/save_training', methods=['POST'])
 def save_training():
     """Save training data to file"""
-    if deduper is None:
-        return jsonify({"error": "Deduper not initialized"}), 500
+    if dedupe is None:
+        return jsonify({"error": "Dedupe not initialized"}), 500
 
     try:
         with open(training_file, "w") as tf:
-            deduper.write_training(tf)
+            dedupe.write_training(tf)
 
         return jsonify(
             {"success": True,
@@ -239,8 +239,8 @@ def save_training():
 
 
 if __name__ == '__main__':
-    # Initialize deduper on startup
-    initialize_deduper()
+    # Initialize Dedupe on startup
+    initialize_dedupe()
 
     # Run Flask app
     app.run(host='0.0.0.0', port=5051, debug=False)

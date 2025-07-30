@@ -4,7 +4,7 @@ The Dedupe training functionality has been split into two components for better 
 
 ## Components
 
-### 1. Dedupe Service (`deduper_service.py`)
+### 1. Dedupe Service (`dedupe_service.py`)
 
 A Flask backend service that handles the heavy Dedupe training operations:
 
@@ -30,7 +30,7 @@ A lightweight Streamlit frontend that communicates with the service:
 ```bash
 # Start the Flask Dedupe training service (runs on port 5001)
 cd /home/ubuntu/wc_simd
-python src/wc_simd/deduper_service.py
+python src/wc_simd/dedupe_service.py
 ```
 
 The service will initialize the Dedupe training on startup (this takes time) and then be ready to serve requests quickly.
@@ -69,6 +69,6 @@ python test_deduper_service.py
 
 ## Files
 
-- `src/wc_simd/deduper_service.py` - Flask backend service
+- `src/wc_simd/dedupe_service.py` - Flask backend service
 - `src/wc_simd/dn_label_train_client.py` - Streamlit frontend client  
 - `test_deduper_service.py` - Service testing script

@@ -40,7 +40,7 @@
             "request": "launch",
             "console": "integratedTerminal",
             "env": {},
-            "program": "${workspaceFolder}/src/wc_simd/deduper_service.py",
+            "program": "${workspaceFolder}/src/wc_simd/dedupe_service.py",
             "cwd": "${workspaceFolder}"
         },
         {
