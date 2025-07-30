@@ -7,7 +7,7 @@
 		"ms-python.autopep8",
 		"yzhang.markdown-all-in-one",
 		"DavidAnson.vscode-markdownlint",
-		"ltex-plus.vscode-ltex-plus",
+		"streetsidesoftware.code-spell-checker",
 		"ms-toolsai.jupyter",
 	],
 	// List of extensions recommended by VS Code that should not be recommended for users of this workspace.
