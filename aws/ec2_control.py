@@ -12,9 +12,9 @@ import dotenv
 dotenv.load_dotenv()
 
 INSTANCE_IDS = [
-    ("i-053dc89605578305e", "eu-west-2"),  # Example instance ID
-    ("i-0b9d4ff3cf046e312", "eu-west-2"),
-    ("i-0addfce1eecfe650f", "us-east-1")  # us-east-1, dsim_gpu_8
+    ("i-053dc89605578305e", "eu-west-2"),  # simd_ubuntu, c6a.16xlarge
+    ("i-0b9d4ff3cf046e312", "eu-west-2"),  # simd_gpu, g5.2xlarge
+    ("i-0addfce1eecfe650f", "us-east-1")  # dsim_gpu_8
 ]
 
 # Get the instance ID from the first tuple
