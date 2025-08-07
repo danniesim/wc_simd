@@ -33,6 +33,34 @@ def call_service(endpoint: str, method: str = "GET",
         st.stop()
 
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def cached_search_records(query: str, limit: int) -> Dict[Any, Any]:
+    """Cached search for raw data records"""
+    search_params = {
+        "query": query,
+        "limit": limit
+    }
+    return call_service("search_records", "POST", search_params)
+
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def cached_search_existing_pairs(
+        query: str, limit: int, label_filter: str) -> Dict[Any, Any]:
+    """Cached search for existing labeled pairs"""
+    search_params = {
+        "query": query,
+        "limit": limit,
+        "label_filter": label_filter
+    }
+    return call_service("search_existing_pairs", "POST", search_params)
+
+
+def clear_search_caches():
+    """Clear all search-related caches"""
+    cached_search_records.clear()
+    cached_search_existing_pairs.clear()
+
+
 def search_and_label() -> None:
     """Search for specific records and create training pairs"""
     st.subheader("🔍 Search & Cherry-pick Training Examples")
@@ -101,24 +129,34 @@ def search_and_label() -> None:
             # Placeholder for consistent layout
             st.write("")
 
+    # Add cache control
+    col_cache1, col_cache2 = st.columns([3, 1])
+    with col_cache2:
+        if st.button("🔄 Clear Cache",
+                     help="Clear search cache to get fresh results"):
+            clear_search_caches()
+            st.success("Search cache cleared!")
+            st.rerun()
+
     if search_query and len(search_query.strip()) >= 2:
-        # Perform search
+        # Perform cached search
         try:
-            # Prepare search parameters
-            search_params = {
-                "query": search_query.strip(),
-                "limit": search_limit
-            }
-
-            # Add filter parameter for existing pairs search
-            if is_relabel_mode:
-                search_params["label_filter"] = label_filter
-
-            search_results = call_service(
-                search_endpoint, "POST", search_params)
+            # Show loading indicator
+            with st.spinner("Searching..."):
+                # Use cached search functions based on mode
+                if is_relabel_mode:
+                    search_results = cached_search_existing_pairs(
+                        search_query.strip(), search_limit, label_filter)
+                else:
+                    search_results = cached_search_records(
+                        search_query.strip(), search_limit)
 
             if search_results.get("results"):
                 results = search_results["results"]
+
+                # Show cache info
+                st.caption(
+                    "💾 Results may be cached for performance. Use 'Clear Cache' for fresh data.")
 
                 # Show query parsing info
                 if "query_parsed" in search_results:
@@ -369,6 +407,8 @@ def display_existing_pairs_results(results, search_query):
                         "record1": record1,
                         "record2": record2
                     })
+                    # Clear search cache since data has changed
+                    clear_search_caches()
                     st.success(f"Deleted {current_label} pair")
                     # Refresh the search results
                     st.rerun()
@@ -415,6 +455,8 @@ def display_existing_pairs_results(results, search_query):
                         })
                         deleted_count += 1
 
+                    # Clear search cache since data has changed
+                    clear_search_caches()
                     st.success(
                         f"Deleted {deleted_count} pairs from training data")
                     # Clear selection and refresh
@@ -499,6 +541,8 @@ def display_cherry_picked_pairs():
                                 "record2": record2
                             })
 
+                            # Clear search cache since data has changed
+                            clear_search_caches()
                             st.success(
                                 f"Deleted pair with label: {current_pair['original_label']}")
 
@@ -551,6 +595,9 @@ def label_cherry_picked_pair(pair, label):
             "record2": record2,
             "label": label
         })
+
+        # Clear search cache since data has changed
+        clear_search_caches()
 
         # Move to next pair
         st.session_state.cherry_picked_index += 1
@@ -719,6 +766,8 @@ def streamlit_label() -> None:
                                 })
                                 deleted_count += 1
 
+                            # Clear search cache since data has changed
+                            clear_search_caches()
                             st.sidebar.success(
                                 f"Deleted {deleted_count} pairs")
                             st.session_state.show_delete_confirmation = False
@@ -964,6 +1013,9 @@ def streamlit_label() -> None:
                     "label": "match"
                 })
 
+                # Clear search cache since data has changed
+                clear_search_caches()
+
                 # Navigate to next pair in re-label mode, or clear for new mode
                 if st.session_state.labeling_mode == "relabel":
                     # Move to next pair or finish if at end
@@ -1009,6 +1061,9 @@ def streamlit_label() -> None:
                     "label": "distinct"
                 })
 
+                # Clear search cache since data has changed
+                clear_search_caches()
+
                 # Navigate to next pair in re-label mode, or clear for new mode
                 if st.session_state.labeling_mode == "relabel":
                     # Move to next pair or finish if at end
@@ -1053,6 +1108,9 @@ def streamlit_label() -> None:
                     "record2": record2,
                     "label": "unsure"
                 })
+
+                # Clear search cache since data has changed
+                clear_search_caches()
 
                 # Navigate to next pair in re-label mode, or clear for new mode
                 if st.session_state.labeling_mode == "relabel":
@@ -1125,6 +1183,9 @@ def streamlit_label() -> None:
                         # Remove the pair from training data
                         call_service(
                             "remove_pair", "POST", st.session_state.current_pair)
+
+                        # Clear search cache since data has changed
+                        clear_search_caches()
                         st.success(
                             f"Deleted pair with original label: {st.session_state.current_pair_original_label}")
 
