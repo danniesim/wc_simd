@@ -6,12 +6,25 @@ from pyspark.sql.types import ArrayType, FloatType, StructType, StructField, Str
 from typing import List, Optional, Union
 import time
 import requests
+import click
+import logging
+from datetime import datetime
 from pyspark.sql import SparkSession
+
+# See scripts/run_qwen3embed_multi.sh for running the endpoint
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 
 class Qwen3Embedding():
     def __init__(
-            self, endpoint: str = "http://ec2-18-134-162-140.eu-west-2.compute.amazonaws.com:8080/embed"):
+            self, endpoint: str = "http://ec2-3-231-68-18.compute-1.amazonaws.com:8080/embed"):
         """
         Initialize the Qwen3Embedding class with the model endpoint.
 
@@ -23,7 +36,7 @@ class Qwen3Embedding():
     def get_detailed_instruct(
             self, task_description: str, query: str) -> str:
         if task_description is None:
-            task_description = self.instruction
+            task_description = "Given a web search query, retrieve relevant passages that answer the query"
         return f'Instruct: {task_description}\nQuery: {query}'
 
     def get_embeddings(
@@ -44,11 +57,15 @@ class Qwen3Embedding():
             List[List[float]]: List of embedding vectors, or None if all retries failed
         """
 
-        if isinstance(sentences, str):
+        if (instruction is None) and (not is_query):
             sentences = [sentences]
         if is_query:
             sentences = [
                 self.get_detailed_instruct(instruction, sent)
+                for sent in sentences]
+        elif instruction:
+            sentences = [
+                f'{instruction}{sent}'
                 for sent in sentences]
 
         # Prepare the request payload
@@ -84,11 +101,12 @@ class Qwen3Embedding():
                         elif isinstance(response_data, list):
                             return response_data  # Some APIs return embeddings as a direct list
                         else:
-                            print(
+                            logger.error(
                                 f"Unexpected response format: {response_data}")
                             return None
                     except Exception as e:
-                        print(f"Failed to parse embedding response: {e}")
+                        logger.error(
+                            f"Failed to parse embedding response: {e}")
                         return None
 
                 # Check if error is retryable
@@ -96,17 +114,17 @@ class Qwen3Embedding():
                     if attempt < max_retries:
                         # Exponential backoff: 1s, 2s, 4s
                         wait_time = min(2 ** attempt, max_backoff_secs)
-                        print(
+                        logger.warning(
                             f"Attempt {attempt + 1} failed with status {response.status_code}. Retrying in {wait_time}s...")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(
+                        logger.error(
                             f"All {max_retries} retries failed. Last status: {response.status_code}")
                         return None
                 else:
                     # Non-retryable error (e.g., 400, 401, 404)
-                    print(
+                    logger.error(
                         f"Non-retryable error: {response.status_code} - {response.text}")
                     return None
 
@@ -116,20 +134,54 @@ class Qwen3Embedding():
                 if attempt < max_retries:
                     wait_time = min(
                         2 ** attempt, max_backoff_secs)  # Exponential backoff
-                    print(
+                    logger.warning(
                         f"Attempt {attempt + 1} failed with error: {e}. Retrying in {wait_time}s...")
                     time.sleep(wait_time)
                 else:
-                    print(f"All {max_retries} retries failed. Last error: {e}")
+                    logger.error(
+                        f"All {max_retries} retries failed. Last error: {e}")
                     return None
 
         return None
 
 
-if __name__ == "__main__":
+@click.command()
+@click.option(
+    '--input-table',
+    default='plain_text_chunks',
+    help='Input table name containing text chunks to embed'
+)
+@click.option(
+    '--output-table-prefix',
+    default='plain_text_chunks_with_embeddings',
+    help='Prefix for output table names (will be suffixed with partition number)'
+)
+@click.option(
+    '--endpoint',
+    default='http://ec2-3-231-68-18.compute-1.amazonaws.com:8080/embed',
+    help='Embedding service endpoint URL'
+)
+@click.option(
+    '--instruction',
+    default=None,
+    help='Custom instruction for embedding generation (used with is_query=True)'
+)
+@click.option(
+    '--batch-size',
+    default=32,
+    type=int,
+    help='Batch size for processing embeddings (default: 32)'
+)
+def main(input_table: str, output_table_prefix: str,
+         endpoint: str, instruction: str, batch_size: int):
+    """Generate embeddings for text chunks using Qwen3Embedding service."""
+    start_time = time.time()
+    logger.info(f"Starting embedding generation for table: {input_table}")
+    logger.info(f"Using batch size: {batch_size}")
+
     spark = (
         SparkSession.builder
-        .appName("test_pyspark")
+        .appName("text_embedding")
         .master("local[100]")
         .config("spark.driver.memory", "100g")
         .config("spark.executor.memory", "100g")
@@ -143,7 +195,6 @@ if __name__ == "__main__":
     spark.sparkContext.setLogLevel("ERROR")
 
     # Define the embedding function that will be applied to each partition
-
     def embed_text_partition(
             iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
         """
@@ -157,13 +208,11 @@ if __name__ == "__main__":
             Iterator of pandas DataFrames with embeddings added
         """
         # Initialize the embedding model
-        embeddings_model = Qwen3Embedding(
-            endpoint="http://ec2-3-231-68-18.compute-1.amazonaws.com:8080/embed")
+        embeddings_model = Qwen3Embedding(endpoint=endpoint)
 
         # Process each DataFrame in the partition
         for df in iterator:
-            # Process in batches of 32 for efficiency
-            batch_size = 32
+            # Process in batches using the specified batch_size
             result_dfs = []
 
             for i in range(0, len(df), batch_size):
@@ -172,7 +221,7 @@ if __name__ == "__main__":
 
                 # Get embeddings for the batch
                 embedding_vectors = embeddings_model.get_embeddings(
-                    texts, is_query=False)
+                    texts, is_query=False, instruction=instruction)
 
                 # Add embeddings to the batch if embeddings were returned
                 batch = batch.copy()
@@ -191,23 +240,31 @@ if __name__ == "__main__":
     ])
 
     chunks_df = (
-        spark.table("plain_text_chunks")
+        spark.table(input_table)
         # .sample(withReplacement=False, fraction=0.0001, seed=42)
     )
 
     # Get the number of partitions
     original_partitions = chunks_df.rdd.getNumPartitions()
-    print(f"Original DataFrame has {original_partitions} partitions")
+    logger.info(f"Original DataFrame has {original_partitions} partitions")
 
     # Create a list to store DataFrames for each partition
     partition_dataframes = []
 
+    # Track timing for progress estimation
+    partition_times = []
+    processed_count = 0
+    skipped_count = 0
+
     # Create a DataFrame for each partition and repartition to 64
     for i, partition_id in enumerate(range(original_partitions)):
+        partition_start_time = time.time()
+
         # Check if table already exists
-        table_name = f"plain_text_chunks_with_embeddings_{i}"
+        table_name = f"{output_table_prefix}_{i}"
         if spark.catalog.tableExists(table_name):
-            print(f"Table {table_name} already exists, skipping...")
+            logger.info(f"Table {table_name} already exists, skipping...")
+            skipped_count += 1
             continue
 
         # Filter data for this specific partition
@@ -216,12 +273,53 @@ if __name__ == "__main__":
         # Repartition to 64 partitions
         repartitioned_df = partition_df.repartition(64)
 
-        print(
+        logger.info(
             f"Created DataFrame for partition {partition_id} with {repartitioned_df.rdd.getNumPartitions()} partitions")
 
-        print(f"Processing partition DataFrame {i}...")
+        logger.info(f"Processing partition DataFrame {i}...")
         embedded_df = repartitioned_df.mapInPandas(
             embed_text_partition,
             schema=embedding_schema
         )
         embedded_df.write.mode("overwrite").saveAsTable(table_name)
+
+        # Calculate timing and progress
+        partition_end_time = time.time()
+        partition_duration = partition_end_time - partition_start_time
+        partition_times.append(partition_duration)
+        processed_count += 1
+
+        # Calculate progress statistics
+        total_remaining = original_partitions - processed_count - skipped_count
+        if partition_times:
+            avg_time_per_partition = sum(
+                partition_times) / len(partition_times)
+            estimated_time_left = avg_time_per_partition * total_remaining
+
+            logger.info(
+                f"Partition {i} completed in {partition_duration:.2f} seconds")
+            logger.info(
+                f"Progress: {processed_count + skipped_count}/{original_partitions} partitions "
+                f"({processed_count} processed, {skipped_count} skipped)")
+            logger.info(
+                f"Average time per partition: {avg_time_per_partition:.2f} seconds")
+            logger.info(
+                f"Estimated time remaining: {estimated_time_left:.2f} seconds ({estimated_time_left/60:.1f} minutes)")
+
+    # Log total time taken
+    end_time = time.time()
+    total_duration = end_time - start_time
+    logger.info(f"=== PROCESSING COMPLETE ===")
+    logger.info(f"Total partitions processed: {processed_count}")
+    logger.info(f"Total partitions skipped: {skipped_count}")
+    logger.info(
+        f"Total time taken: {total_duration:.2f} seconds ({total_duration/60:.1f} minutes)")
+    if partition_times:
+        logger.info(
+            f"Average time per processed partition: {sum(partition_times)/len(partition_times):.2f} seconds")
+        logger.info(f"Fastest partition: {min(partition_times):.2f} seconds")
+        logger.info(f"Slowest partition: {max(partition_times):.2f} seconds")
+
+
+if __name__ == "__main__":
+    main()
