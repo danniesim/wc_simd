@@ -21,3 +21,6 @@ data/sample_each_type_concept.xlsx
 data/dn_labels_filtered_dedup_result.csv
 data/dn_labels_dedup_data.csv
 data/dn_labels_clustered_dupes.csv
+data/name_rec/
+data/name_rec_embeddings.npy
+data/name_rec_faiss.index

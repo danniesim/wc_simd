@@ -77,5 +77,26 @@
             ],
             "cwd": "${workspaceFolder}"
         },
+        {
+            "name": "Name Rec Embed",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "env": {},
+            "program": "${workspaceFolder}/src/wc_simd/embed.py",
+            "cwd": "${workspaceFolder}",
+            "args": [
+                "--input-table",
+                "name_rec_for_embedding",
+                "--output-table-prefix",
+                "name_rec_embeddings",
+                "--endpoint",
+                "http://ec2-3-231-68-18.compute-1.amazonaws.com:8080/embed",
+                "--instruction",
+                "INSTRUCT: Given a search query with a person's name, retrieve relevant passages that has the person mentioned. QUERY: ",
+                "--batch-size",
+                "32"
+            ]
+        },
     ]
 }
