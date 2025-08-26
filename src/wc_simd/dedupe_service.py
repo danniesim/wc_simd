@@ -26,7 +26,7 @@ training_file = "data/dn_label_dedupe_training.json"
 settings_file = "data/dn_label_dedupe_settings.bin"
 
 fields = [
-    dedupe.variables.String("label"),
+    dedupe.variables.String("label", crf=True),
     dedupe.variables.String("type")
 ]
 

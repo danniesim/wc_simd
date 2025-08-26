@@ -12,7 +12,7 @@ dependencies = [
     "pandas (>=2.2.3,<3.0.0)",
     "dotenv (>=0.9.9,<0.10.0)",
     "langchain (>=0.3.23,<0.4.0)",
-    "langchain-aws (>=0.2.18,<0.3.0)",
+    "langchain-aws>=0.2.18,<0.3.0",
     "langgraph-supervisor (>=0.0.16,<0.0.17)",
     "langsmith (>=0.3.27,<0.4.0)",
     "langchain-community>=0.3.21,<0.4.0",
@@ -29,7 +29,7 @@ dependencies = [
     "scikit-learn>=1.6.1",
     "pip>=25.1.1",
     "sglang>=0.4.6.post3",
-    "transformers>=4.51.3",
+    "transformers>=4.50",
     "vllm>=0.8.5.post1",
     "sagemaker>=2.244.0",
     "openai>=1.78.1",
@@ -53,6 +53,11 @@ dependencies = [
     "flask>=3.1.1",
     "openpyxl>=3.1.5",
     "fuzzywuzzy>=0.18.0",
+    "python-levenshtein>=0.27.1",
+    "tabulate>=0.9.0",
+    "click>=8.0.0",
+    "faiss-cpu>=1.12.0",
+    "spacy-curated-transformers>=0.3.1",
 ]
 
 [tool.pdm.dev-dependencies]
