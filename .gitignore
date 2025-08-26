@@ -24,3 +24,4 @@ data/dn_labels_clustered_dupes.csv
 data/name_rec/
 data/name_rec_embeddings.npy
 data/name_rec_faiss.index
+.env.name_rec
