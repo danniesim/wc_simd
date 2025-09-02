@@ -49,13 +49,15 @@ class ChatSession:
     def get_config(self):
         return {"configurable": {"thread_id": self.session_id}}
 
-    def __init__(self, session_id: str = None, system_instruction: str = None):
+    def __init__(
+            self, session_id: str = None, system_instruction: str = None,
+            temperature: float = 0.2):
 
         self.system_instruction = system_instruction
 
         self.llm = ChatBedrock(
             model_id="openai.gpt-oss-120b-1:0",
-            model_kwargs=dict(temperature=0.2),
+            model_kwargs=dict(temperature=temperature),
             region="us-west-2"
         )
 

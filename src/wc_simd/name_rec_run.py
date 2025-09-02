@@ -7,10 +7,15 @@ import dotenv
 from wc_simd.dedupe_service import dedup_data_file
 from wc_simd.llm import ChatSession
 import tqdm
+import logging
 
 
 index_path = "data/name_rec_faiss.index"
 embed_prompt = "Instruct: Given a search query that contains a person's name, retrieve relevant passages that mention the same person.\nQuery: "
+
+
+def id_idx_str(id: str, idx: int) -> str:
+    return f"{id}_{idx}"
 
 
 def get_reconciled(model, index, to_index, label, k):
@@ -42,15 +47,26 @@ def get_reconciled(model, index, to_index, label, k):
     records_for_candidates = []
     for i, (sim, vec_idx) in enumerate(zip(similarities[0], indices[0])):
         if sim >= cutoff_similarity:
-            records_for_context.append(dict(
-                label=str(to_index.iloc[vec_idx]['label']),
-                idx=int(to_index.iloc[vec_idx]['idx'])
-            ))
-        records_for_candidates.append(dict(
-            label=str(to_index.iloc[vec_idx]['label']),
-            idx=int(to_index.iloc[vec_idx]['idx']),
-            similarity=float(sim)
-        ))
+            records_for_context.append(
+                dict(
+                    label=str(
+                        to_index.iloc[vec_idx]
+                        ['label']),
+                    idx=id_idx_str(
+                        to_index.iloc[vec_idx]
+                        ['id'],
+                        to_index.iloc[vec_idx]
+                        ['idx'])))
+        records_for_candidates.append(
+            dict(
+                label=str(
+                    to_index.iloc[vec_idx]
+                    ['label']),
+                idx=id_idx_str(
+                    to_index.iloc[vec_idx]['id'],
+                    to_index.iloc[vec_idx]
+                    ['idx']),
+                similarity=float(sim)))
 
     # To csv in string buffer
     csv_string = pd.DataFrame(records_for_context).to_csv(
@@ -59,33 +75,36 @@ def get_reconciled(model, index, to_index, label, k):
 
     chat = ChatSession(
         system_instruction="""# INSTRUCTIONS
-You will be given the name of a person and a CSV string with the following format:
+You will be given a target name of a person and a CSV string with the following format:
 
-name,idx
+name,index
 
 ## Goal
-Identify all mentions of the person in the context and return their indices.
+Identify all names in the CSV that can be reconciled to the target name and return their indices.
 
 ## Rules
-    1. If the person is mentioned in the context, return the idx.
-    2. If the person is not mentioned, return an empty list.
-    3. If there are multiple mentions, return all matching idxs.
-    4. If the person is mentioned with different names, return all variations as a json list.
-    5. If there is not enough information contained in either name, do not return the idx.
+- Take in account initials and dates to disambiguate.
+- If there is a match for a full name but no date, we take it that is is disambiguated to a medium degree.
+- If the match depends on initials it is disambiguated to a low degree unless there is a date match which makes it a medium degree.
+- If the name cannot be disambiguated to a medium degree, do not return the index.
+- If the target name is too ambiguous, do not return any indices.
 
 ## Output Format
-Return a JSON list with the following format:
+Return a JSON list of indices with the following format:
 
-[idx1, idx2, ...]
+["idx1", "idx2", ...]
 }
-""")
+""", temperature=0)
 
-    result = chat.send(f"Person: {label}\nCSV:\n{csv_string}", stdout=False)
+    result = chat.send(
+        f"Person: {label}\n\n## CSV\n{csv_string}",
+        stdout=False)
     return dict(reconciled=json.loads(
         result[0]), candidates=records_for_candidates)
 
 
 def name_rec_run():
+    logging.getLogger("langchain_aws.llms.bedrock").setLevel(logging.WARNING)
     dotenv.load_dotenv(dotenv_path=".env.name_rec")
 
     model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
@@ -106,21 +125,27 @@ def name_rec_run():
             to_index_sample.iterrows(),
             total=to_index_sample.shape[0]):
         label = row['label']
-        idx = row['idx']
+        idx = id_idx_str(row['id'], row['idx'])
         out_file = f"data/name_rec/name_rec_{idx}.json"
         # Skip if file exists
         if os.path.exists(out_file):
             continue
         similar_embeddings = get_reconciled(
             model, index, to_index, label, k=100)
+
+        reconciled_output = similar_embeddings["reconciled"]
+        # Remove empty strings
+        reconciled_output = [x for x in reconciled_output if x]
         reconciled_labels = [
             dict(
-                label=to_index[to_index['idx'] == x]
+                label=to_index[to_index['idx'] == int(x.split('_')[1])]
                 ['label'].values[0],
-                idx=x) for x in similar_embeddings["reconciled"]]
+                idx=x)
+            for x in reconciled_output
+        ]
         out_dict = dict(
             label=str(label),
-            idx=int(idx),
+            idx=str(idx),
             reconciled_labels=reconciled_labels,
             candidates=similar_embeddings["candidates"]
         )
