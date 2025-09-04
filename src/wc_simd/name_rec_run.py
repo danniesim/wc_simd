@@ -8,10 +8,34 @@ from wc_simd.dedupe_service import dedup_data_file
 from wc_simd.llm import ChatSession
 import tqdm
 import logging
+import time
+from tenacity import Retrying, stop_after_attempt, wait_fixed, retry
 
 
 index_path = "data/name_rec_faiss.index"
 embed_prompt = "Instruct: Given a search query that contains a person's name, retrieve relevant passages that mention the same person.\nQuery: "
+
+system_instruction = """# INSTRUCTIONS
+You will be given a target name of a person and a CSV string with the following format:
+
+name,index
+
+## Goal
+Identify all names in the CSV that can be reconciled to the target name and return their indices.
+
+## Rules
+- Take in account initials and dates to disambiguate.
+- If there is a match for a full name but no date, we take it that is is disambiguated to a medium degree.
+- If the match depends on initials it is disambiguated to a low degree unless there is a date match which makes it a medium degree.
+- If the name cannot be disambiguated to a medium degree, do not return the index.
+- If the target name is too ambiguous, do not return any indices.
+
+## Output Format
+Return a JSON list of indices with the following format:
+
+["idx1", "idx2", ...]
+}
+"""
 
 
 def id_idx_str(id: str, idx: int) -> str:
@@ -73,34 +97,40 @@ def get_reconciled(model, index, to_index, label, k):
         index=False, header=False, sep=",", encoding="utf-8")
     # print(csv_string)
 
-    chat = ChatSession(
-        system_instruction="""# INSTRUCTIONS
-You will be given a target name of a person and a CSV string with the following format:
+    # Retry logic for chat + JSON parsing via tenacity annotation
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), reraise=True)
+    def _call_chat_and_parse():
+        attempt_number = _call_chat_and_parse.retry.statistics.get(
+            'attempt_number',
+            1)
+        try:
+            chat = ChatSession(
+                system_instruction=system_instruction,
+                temperature=min(0.0 + (float(attempt_number) / 10.0), 0.2))
+            result = chat.send(
+                f"Person: {label}\n\n## CSV\n{csv_string}",
+                stdout=False)
+            return json.loads(result[0])
+        except Exception as e:
+            logging.exception(
+                "Reconciliation attempt %d failed for label=%s: %s",
+                attempt_number,
+                label,
+                e)
+            # Re-raise so tenacity can retry / eventually bubble up
+            raise
 
-name,index
-
-## Goal
-Identify all names in the CSV that can be reconciled to the target name and return their indices.
-
-## Rules
-- Take in account initials and dates to disambiguate.
-- If there is a match for a full name but no date, we take it that is is disambiguated to a medium degree.
-- If the match depends on initials it is disambiguated to a low degree unless there is a date match which makes it a medium degree.
-- If the name cannot be disambiguated to a medium degree, do not return the index.
-- If the target name is too ambiguous, do not return any indices.
-
-## Output Format
-Return a JSON list of indices with the following format:
-
-["idx1", "idx2", ...]
-}
-""", temperature=0)
-
-    result = chat.send(
-        f"Person: {label}\n\n## CSV\n{csv_string}",
-        stdout=False)
-    return dict(reconciled=json.loads(
-        result[0]), candidates=records_for_candidates)
+    try:
+        reconciled_list = _call_chat_and_parse()
+        return dict(
+            reconciled=reconciled_list,
+            candidates=records_for_candidates)
+    except Exception as e:
+        # Final fallback result on repeated failure
+        return dict(
+            reconciled=[],
+            candidates=records_for_candidates,
+            error=str(e))
 
 
 def name_rec_run():
@@ -118,7 +148,7 @@ def name_rec_run():
         ["Person", "Agent"])].reset_index(drop=False)
 
     # Save sample to csv
-    to_index_sample = to_index.sample(n=400, random_state=420)
+    to_index_sample = to_index.sample(n=3000, random_state=420)
     to_index_sample.to_csv("data/name_rec_sample.csv", index=False)
 
     for _, row in tqdm.tqdm(
@@ -133,16 +163,41 @@ def name_rec_run():
         similar_embeddings = get_reconciled(
             model, index, to_index, label, k=100)
 
-        reconciled_output = similar_embeddings["reconciled"]
-        # Remove empty strings
-        reconciled_output = [x for x in reconciled_output if x]
-        reconciled_labels = [
-            dict(
-                label=to_index[to_index['idx'] == int(x.split('_')[1])]
-                ['label'].values[0],
-                idx=x)
-            for x in reconciled_output
-        ]
+        # Skip if similar_embeddings has error key
+        if "error" in similar_embeddings:
+            continue
+
+        @retry(stop=stop_after_attempt(3), wait=wait_fixed(1), reraise=True)
+        def get_reconciled_labels():
+            """Compute reconciled labels with retry via tenacity annotation.
+
+            The attempt number is obtained from the tenacity wrapper's statistics.
+            """
+            attempt_number = get_reconciled_labels.retry.statistics.get(
+                'attempt_number',
+                1)
+            reconciled_output = similar_embeddings["reconciled"]
+            reconciled_output = [
+                x for x in reconciled_output if x]  # strip empties
+            reconciled_labels = []
+            for x in reconciled_output:
+                try:
+                    label_value = to_index[to_index['idx'] == int(
+                        x.split('_')[1])]['label'].values[0]
+                except Exception as e:
+                    logging.warning(
+                        "get_reconciled_labels attempt %d failed to resolve label for %s: %s",
+                        attempt_number, x, e)
+                    # Re-raise to trigger retry
+                    raise
+                reconciled_labels.append(dict(label=label_value, idx=x))
+            logging.debug(
+                "get_reconciled_labels succeeded on attempt %d with %d labels",
+                attempt_number, len(reconciled_labels))
+            return reconciled_labels
+
+        reconciled_labels = get_reconciled_labels()
+
         out_dict = dict(
             label=str(label),
             idx=str(idx),
