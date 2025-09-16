@@ -30,6 +30,10 @@ See [this](./docs/local_hive_spark.md)
 
 I use [pytest](https://docs.pytest.org/) for testing. Tests can be found in [tests](./tests/).
 
+## Demos
+
+Demos like bookchat cand be found in [demos](./demos/)
+
 ## Lint and Spellcheck
 
 I use LTeX and Markdown Lint to keep my docs and comments sane. Here are my [recommended VS Code extensions](./.vscode/extensions.json)
