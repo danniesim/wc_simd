@@ -8,6 +8,24 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "accelerate"
+version = "1.10.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "psutil" },
+    { name = "pyyaml" },
+    { name = "safetensors" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b1/72/ff3961c19ee395c3d30ac630ee77bfb0e1b46b87edc504d4f83bb4a89705/accelerate-1.10.1.tar.gz", hash = "sha256:3dea89e433420e4bfac0369cae7e36dcd6a56adfcfd38cdda145c6225eab5df8", size = 392446, upload-time = "2025-08-25T13:57:06.21Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/a0/d9ef19f780f319c21ee90ecfef4431cbeeca95bec7f14071785c17b6029b/accelerate-1.10.1-py3-none-any.whl", hash = "sha256:3621cff60b9a27ce798857ece05e2b9f56fcc71631cfb31ccf71f0359c311f11", size = 374909, upload-time = "2025-08-25T13:57:04.55Z" },
+]
+
+[[package]]
 name = "affinegap"
 version = "1.12"
 source = { registry = "https://pypi.org/simple" }
@@ -5077,6 +5095,7 @@ name = "wc-simd"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "accelerate" },
     { name = "bson" },
     { name = "click" },
     { name = "dedupe" },
@@ -5113,6 +5132,7 @@ dependencies = [
     { name = "pyspark" },
     { name = "pytest" },
     { name = "python-levenshtein" },
+    { name = "requests" },
     { name = "sagemaker" },
     { name = "scikit-learn" },
     { name = "seaborn" },
@@ -5135,6 +5155,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "accelerate", specifier = ">=1.10.1" },
     { name = "bson", specifier = ">=0.5.10" },
     { name = "click", specifier = ">=8.0.0" },
     { name = "dedupe", specifier = ">=3.0.3" },
@@ -5171,6 +5192,7 @@ requires-dist = [
     { name = "pyspark", specifier = ">=3.5.5,<4.0.0" },
     { name = "pytest", specifier = ">=8.3.5,<9.0.0" },
     { name = "python-levenshtein", specifier = ">=0.27.1" },
+    { name = "requests", specifier = ">=2.32.3" },
     { name = "sagemaker", specifier = ">=2.244.0" },
     { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "seaborn", specifier = ">=0.13.2" },

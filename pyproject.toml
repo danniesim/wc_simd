@@ -60,6 +60,8 @@ dependencies = [
     "spacy-curated-transformers>=0.3.1",
     "tenacity>=9.1.2",
     "paddlepaddle>=3.2.0",
+    "accelerate>=1.10.1",
+    "requests>=2.32.3",
 ]
 
 [tool.pdm.dev-dependencies]
