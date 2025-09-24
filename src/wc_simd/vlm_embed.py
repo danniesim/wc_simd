@@ -10,6 +10,12 @@ import os
 import argparse
 import hashlib
 from typing import Dict, List, Optional
+import time
+import threading
+from queue import Queue
+import concurrent.futures
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -46,6 +52,18 @@ def parse_args():
     parser.add_argument(
         "--allow-shared-gpu", action="store_true",
         help="Allow multiple instances to share a single GPU (disabled by default)")
+    parser.add_argument(
+        "--prefetch-workers", type=int, default=8,
+        help="Number of worker threads for background image prefetch (default: 8)")
+    parser.add_argument(
+        "--prefetch-buffer", type=int, default=64,
+        help="Max number of prefetched (fetched or errored) items buffered ahead of embedding (default: 64)")
+    parser.add_argument(
+        "--no-prefetch", action="store_true",
+        help="Disable background prefetch pipeline and fall back to sequential fetch (debug)")
+    parser.add_argument(
+        "--fetch-max-inflight", type=int, default=None,
+        help="Max simultaneous in-flight HTTP fetch tasks (default: 4 * prefetch-workers)")
     return parser.parse_args()
 
 
@@ -160,72 +178,214 @@ for file in selected_files:
     print(f"Loaded {len(df)} rows (processing first {total_rows})")
     print(f"Columns: {df.columns.tolist()}")
 
-    success_indices: List[int] = []
-    success_images: List[Image.Image] = []
     errors: Dict[int, str] = {}
 
-    print("Fetching images...")
-    for idx, url in enumerate(df['image_id']):
-        if idx >= total_rows:
-            break
-        try:
-            img = load_image_from_url(url)
-            # normalize mode to RGB to reduce surprises downstream
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-            success_indices.append(idx)
-            success_images.append(img)
-        except requests.exceptions.RequestException as e:
-            errors[idx] = f"HTTP ERROR: {e}"
-        except Exception as e:
-            errors[idx] = f"EXCEPTION ERROR: {e}"
+    if args.no_prefetch:
+        # Original sequential path (for debug / reproducibility)
+        success_indices: List[int] = []
+        success_images: List[Image.Image] = []
+        print("Fetching images sequentially (no prefetch)...")
+        for idx, url in enumerate(df['image_id']):
+            if idx >= total_rows:
+                break
+            try:
+                img = load_image_from_url(url)
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                success_indices.append(idx)
+                success_images.append(img)
+            except requests.exceptions.RequestException as e:
+                errors[idx] = f"HTTP ERROR: {e}"
+            except Exception as e:
+                errors[idx] = f"EXCEPTION ERROR: {e}"
 
-    print(
-        f"Successfully loaded {len(success_images)} images; {len(errors)} errors")
+        print(
+            f"Successfully loaded {len(success_images)} images; {len(errors)} errors")
 
-    # Embed images preserving order of success_indices
-    embeddings: List[torch.Tensor] = []
-    if success_images:
-        with torch.inference_mode():
-            for start in range(0, len(success_images), BATCH_SIZE):
-                batch_images = success_images[start:start + BATCH_SIZE]
-                e_batch = gme.get_image_embeddings(images=batch_images)
-                assert e_batch.shape[0] == len(
-                    batch_images), "Embedding batch size mismatch"
-                embeddings.append(e_batch)
-                print(
-                    f"Processed batch {(start // BATCH_SIZE) + 1} / {(len(success_images) - 1)//BATCH_SIZE + 1}")
+        embeddings: List[torch.Tensor] = []
+        if success_images:
+            with torch.inference_mode():
+                for start in range(0, len(success_images), BATCH_SIZE):
+                    batch_images = success_images[start:start + BATCH_SIZE]
+                    e_batch = gme.get_image_embeddings(images=batch_images)
+                    assert e_batch.shape[0] == len(
+                        batch_images), "Embedding batch size mismatch"
+                    embeddings.append(e_batch)
+                    print(
+                        f"Processed batch {(start // BATCH_SIZE) + 1} / {(len(success_images) - 1)//BATCH_SIZE + 1}")
 
-    if embeddings:
-        embeddings_tensor = torch.cat(embeddings, dim=0).cpu()
-    else:
-        embeddings_tensor = torch.empty(
-            (0, gme.config.hidden_size),
-            dtype=torch.float32)
-
-    # Map original index -> position in embeddings tensor
-    index_to_pos = {orig_idx: pos for pos, orig_idx
-                    in enumerate(success_indices)}
-
-    result_rows = []
-    for idx in range(total_rows):
-        if idx in errors:
-            result_rows.append({
-                'row_index': idx,
-                'image_id': df.iloc[idx]['image_id'],
-                'embedding': None,
-                'error': errors[idx]
-            })
+        if embeddings:
+            embeddings_tensor = torch.cat(embeddings, dim=0).cpu()
         else:
-            pos = index_to_pos[idx]
-            emb = embeddings_tensor[pos].numpy(
-            ) if pos < embeddings_tensor.shape[0] else None
-            result_rows.append({
-                'row_index': idx,
-                'image_id': df.iloc[idx]['image_id'],
-                'embedding': emb,
-                'error': None
-            })
+            embeddings_tensor = torch.empty(
+                (0, gme.config.hidden_size),
+                dtype=torch.float32)
+
+        index_to_pos = {
+            orig_idx: pos for pos,
+            orig_idx in enumerate(success_indices)}
+        result_rows = []
+        for idx in range(total_rows):
+            if idx in errors:
+                result_rows.append({
+                    'row_index': idx,
+                    'image_id': df.iloc[idx]['image_id'],
+                    'embedding': None,
+                    'error': errors[idx]
+                })
+            else:
+                pos = index_to_pos[idx]
+                emb = embeddings_tensor[pos].numpy(
+                ) if pos < embeddings_tensor.shape[0] else None
+                result_rows.append({
+                    'row_index': idx,
+                    'image_id': df.iloc[idx]['image_id'],
+                    'embedding': emb,
+                    'error': None
+                })
+    else:
+        # Background prefetch path
+        print(
+            f"Prefetching images in background with {args.prefetch_workers} workers (buffer={args.prefetch_buffer})...")
+        t_prefetch_start = time.time()
+
+        # Queue items: (idx:int, image:Image|None, error:str|None) ; sentinel
+        # idx == -1
+        q: Queue = Queue(maxsize=args.prefetch_buffer)
+        SENTINEL = (-1, None, None)
+
+        # Shared HTTP session with retry + connection pooling
+        retry_conf = Retry(
+            total=2,
+            backoff_factor=0.4,
+            status_forcelist=[500, 502, 503, 504],
+            allowed_methods=["GET"],
+            raise_on_status=False,
+        )
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            max_retries=retry_conf,
+            pool_connections=args.prefetch_workers,
+            pool_maxsize=(
+                args.fetch_max_inflight or (
+                    args.prefetch_workers * 4)))
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
+
+        def fetch_single(idx: int, url: str):
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (compatible; Python script)'}
+                resp = session.get(
+                    url, headers=headers, timeout=(
+                        3, 20))  # (connect, read)
+                resp.raise_for_status()
+                img = Image.open(BytesIO(resp.content))
+                if img.mode != 'RGB':
+                    img = img.convert('RGB')
+                return (idx, img, None)
+            except Exception as e:  # consolidated (network + decode)
+                return (idx, None, f"FETCH ERROR: {e}")
+
+        def producer():
+            max_inflight = args.fetch_max_inflight or (
+                args.prefetch_workers * 4)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.prefetch_workers) as executor:
+                next_idx = 0
+                futures: Dict[concurrent.futures.Future, int] = {}
+                # prime
+                while next_idx < total_rows and len(futures) < max_inflight:
+                    url = df['image_id'].iloc[next_idx]
+                    fut = executor.submit(fetch_single, next_idx, url)
+                    futures[fut] = next_idx
+                    next_idx += 1
+                while futures:
+                    done, _pending = concurrent.futures.wait(
+                        futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
+                    for fut in done:
+                        q.put(fut.result())
+                        del futures[fut]
+                        # backfill to maintain inflight level
+                        if next_idx < total_rows:
+                            url = df['image_id'].iloc[next_idx]
+                            new_fut = executor.submit(
+                                fetch_single, next_idx, url)
+                            futures[new_fut] = next_idx
+                            next_idx += 1
+                # all done
+            q.put(SENTINEL)
+
+        threading.Thread(target=producer, daemon=True).start()
+
+        state = {
+            'embeddings_map': {},  # idx -> tensor
+            'success_count': 0,
+            'processed_batches': 0,
+            'batch_images': [],  # type: List[Image.Image]
+            'batch_indices': []  # type: List[int]
+        }
+
+        def embed_current_batch():
+            if not state['batch_images']:
+                return
+            with torch.inference_mode():
+                e_batch = gme.get_image_embeddings(
+                    images=state['batch_images'])
+            assert e_batch.shape[0] == len(
+                state['batch_images']), "Embedding batch size mismatch"
+            for local_pos, orig_idx in enumerate(state['batch_indices']):
+                state['embeddings_map'][orig_idx] = e_batch[local_pos].cpu()
+            state['processed_batches'] += 1
+            state['success_count'] += len(state['batch_images'])
+            print(
+                f"Processed batch {state['processed_batches']} (images so far: {state['success_count']})")
+            # clear lists in-place
+            state['batch_images'].clear()
+            state['batch_indices'].clear()
+
+        while True:
+            idx_img_err = q.get()
+            if idx_img_err == SENTINEL:
+                # flush remainder
+                embed_current_batch()
+                break
+            idx_i, img_i, err_i = idx_img_err
+            if err_i:
+                errors[idx_i] = err_i
+            else:
+                state['batch_images'].append(img_i)  # type: ignore[arg-type]
+                state['batch_indices'].append(idx_i)
+                if len(state['batch_images']) >= BATCH_SIZE:
+                    embed_current_batch()
+
+        elapsed = time.time() - t_prefetch_start
+        embedded_count = len(state['embeddings_map'])
+        imgs_per_sec = embedded_count / elapsed if elapsed > 0 else 0.0
+        print(
+            f"Finished prefetch+embed: {embedded_count} images embedded; {len(errors)} errors; "
+            f"elapsed {elapsed:.2f}s; throughput {imgs_per_sec:.2f} img/s")
+
+        # Build result rows using embeddings_map
+        result_rows = []
+        # type: ignore[assignment]
+        embeddings_map: Dict[int, torch.Tensor] = state['embeddings_map']
+        for idx in range(total_rows):
+            if idx in errors:
+                result_rows.append({
+                    'row_index': idx,
+                    'image_id': df.iloc[idx]['image_id'],
+                    'embedding': None,
+                    'error': errors[idx]
+                })
+            else:
+                emb_tensor = embeddings_map.get(idx)
+                emb = emb_tensor.numpy() if emb_tensor is not None else None
+                result_rows.append({
+                    'row_index': idx,
+                    'image_id': df.iloc[idx]['image_id'],
+                    'embedding': emb,
+                    'error': None
+                })
 
     out_df = pd.DataFrame(result_rows)
 
