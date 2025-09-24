@@ -25,4 +25,5 @@ data/name_rec/
 data/name_rec_embeddings.npy
 data/name_rec_faiss.index
 data/works_with_images_no_text_partitioned.parquet**
+data/works_with_images_no_text_partitioned_embedded.parquet**
 .env.name_rec
