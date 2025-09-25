@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "demos/imagetalk/backend"
+		},
+		{
+			"path": "demos/imagetalk/frontend"
+		}
+	],
+	"settings": {}
+}
