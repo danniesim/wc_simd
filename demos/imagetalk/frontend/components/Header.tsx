@@ -9,8 +9,8 @@ import Link from 'next/link';
 
 const NAV_LINKS = [
     { label: 'Home', href: '/' },
-    { label: 'About', href: '/about' },
-    { label: 'Contact', href: '/contact' },
+    { label: 'Demo', href: '/demo' },
+    { label: 'Docs', href: '/docs' },
 ];
 
 const Header = () => {

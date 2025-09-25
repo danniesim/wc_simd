@@ -1,0 +1,22 @@
+[project]
+name = "imagetalk-backend"
+version = "0.1.0"
+description = "Flask backend for the ImageTalk push-to-talk demo."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "accelerate>=1.10.1",
+    "flash-attn>=2.8.3",
+    "flask>=3.1,<4.0",
+    "ipykernel>=6.30.1",
+    "ipywidgets>=8.1.7",
+    "numpy>=1.26,<3.0",
+    "openai>=1.109.1",
+    "pillow>=11.3.0",
+    "pytest>=8.4.2",
+    "qwen-omni-utils>=0.0.8",
+    "soundfile>=0.12,<0.15",
+    "torch>=2.3,<3.0",
+    "torchvision>=0.23.0",
+    "transformers @ git+https://github.com/huggingface/transformers.git",
+    "vllm[audio]>=0.10.2",
+]
