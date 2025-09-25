@@ -1,18 +1,24 @@
-import React from 'react';
+import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
+import AppShell from '../components/AppShell';
+import { ThemeRegistry } from '../components/ThemeRegistry';
 import './globals.css';
 
-const Layout = ({ children }) => {
+export const metadata: Metadata = {
+    title: 'ImageTalk',
+    description: 'Interactive image conversation demo.',
+};
+
+const RootLayout = ({ children }: { children: ReactNode }) => {
     return (
-        <div>
-            <header>
-                {/* You can include the Header component here */}
-            </header>
-            <main>{children}</main>
-            <footer>
-                {/* You can include footer content here */}
-            </footer>
-        </div>
+        <html lang="en" suppressHydrationWarning>
+            <body suppressHydrationWarning>
+                <ThemeRegistry>
+                    <AppShell>{children}</AppShell>
+                </ThemeRegistry>
+            </body>
+        </html>
     );
 };
 
-export default Layout;
+export default RootLayout;
