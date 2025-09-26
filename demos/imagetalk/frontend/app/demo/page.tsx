@@ -10,6 +10,7 @@ import Divider from '@mui/material/Divider';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 type AudioHistoryEntry = {
     id: string;
@@ -858,11 +859,28 @@ const DemoPage = () => {
                                                     color={isGridRecording ? 'error' : 'primary'}
                                                     size="small"
                                                     disabled={gridButtonDisabled}
-                                                    onMouseDown={() => handleImageQueryStart(result.id, result.imageIds)}
-                                                    onMouseUp={() => handleImageQueryStop(result.id)}
-                                                    onMouseLeave={isGridRecording ? () => handleImageQueryStop(result.id) : undefined}
-                                                    onTouchStart={() => handleImageQueryStart(result.id, result.imageIds)}
-                                                    onTouchEnd={() => handleImageQueryStop(result.id)}
+                                                    onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
+                                                        if (gridButtonDisabled) {
+                                                            return;
+                                                        }
+                                                        event.preventDefault();
+                                                        try {
+                                                            event.currentTarget.setPointerCapture(event.pointerId);
+                                                        } catch (captureError) {
+                                                            console.warn('Failed to capture pointer', captureError);
+                                                        }
+                                                        handleImageQueryStart(result.id, result.imageIds);
+                                                    }}
+                                                    onPointerUp={(event: ReactPointerEvent<HTMLButtonElement>) => {
+                                                        event.preventDefault();
+                                                        try {
+                                                            event.currentTarget.releasePointerCapture(event.pointerId);
+                                                        } catch (releaseError) {
+                                                            // ignore
+                                                        }
+                                                        handleImageQueryStop(result.id);
+                                                    }}
+                                                    onPointerCancel={() => handleImageQueryStop(result.id)}
                                                     sx={{ textTransform: 'none', fontWeight: 600 }}
                                                 >
                                                     {gridButtonLabel}
