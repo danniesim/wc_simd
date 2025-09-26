@@ -18,11 +18,27 @@ type AudioHistoryEntry = {
     timestamp: number;
 };
 
+type ImageSearchFollowUp = {
+    id: string;
+    transcript: string;
+    audioUrl: string;
+    timestamp: number;
+};
+
 type ImageSearchResult = {
     id: string;
     transcript: string;
     imageIds: string[];
     timestamp: number;
+    followUps: ImageSearchFollowUp[];
+};
+
+type RecordingMode = 'audio' | 'images' | 'imageQuery';
+
+type RecordingContext = {
+    mode: RecordingMode;
+    imageUrls?: string[];
+    resultId?: string;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_IMAGETALK_API_BASE_URL ?? 'http://localhost:8000';
@@ -97,13 +113,15 @@ const DemoPage = () => {
     const [sessionId, setSessionId] = useState<string | null>(null);
     const [audioStatus, setAudioStatus] = useState(AUDIO_DEFAULT_STATUS);
     const [imageStatus, setImageStatus] = useState(IMAGE_DEFAULT_STATUS);
+    const [imageQueryStatus, setImageQueryStatus] = useState<Record<string, string>>({});
+    const [imageQueryProcessingId, setImageQueryProcessingId] = useState<string | null>(null);
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const streamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const audioUrlsRef = useRef<string[]>([]);
-    const activeModeRef = useRef<'audio' | 'images' | null>(null);
+    const recordingContextRef = useRef<RecordingContext | null>(null);
 
     const audioTips = useMemo(
         () => [
@@ -142,7 +160,7 @@ const DemoPage = () => {
             void audioContextRef.current.close();
             audioContextRef.current = null;
         }
-        activeModeRef.current = null;
+        recordingContextRef.current = null;
     }, []);
 
     useEffect(
@@ -258,25 +276,108 @@ const DemoPage = () => {
             transcript,
             imageIds: imageIds.slice(0, 4),
             timestamp: Date.now(),
+            followUps: [],
         };
         setImageResults((prev) => [entry, ...prev]);
+        setImageQueryStatus((prev) => ({
+            ...prev,
+            [entry.id]: 'Hold the button to ask about these images.',
+        }));
     }, []);
 
+    const sendToAudioImage = useCallback(
+        async (wavBlob: Blob, imageUrls: string[], resultId?: string) => {
+            if (imageUrls.length === 0) {
+                throw new Error('No images available for this query.');
+            }
+            const form = new FormData();
+            form.append('audio', wavBlob, 'recording.wav');
+            imageUrls.forEach((url) => {
+                if (url) {
+                    form.append('images', url);
+                }
+            });
+
+            const response = await fetch(`${API_BASE}/api/v1/audio-image`, {
+                method: 'POST',
+                body: form,
+            });
+
+            if (!response.ok) {
+                let msg: string;
+                try {
+                    const txt = await response.text();
+                    msg = txt || 'Audio-image request failed';
+                } catch {
+                    msg = 'Audio-image request failed';
+                }
+                throw new Error(msg);
+            }
+
+            const contentType = response.headers.get('Content-Type') || '';
+            if (!contentType.startsWith('audio/wav')) {
+                let msg: string;
+                try {
+                    msg = await response.text();
+                } catch {
+                    msg = 'Unexpected response type from audio-image endpoint';
+                }
+                throw new Error(msg || 'Unexpected response type from audio-image endpoint');
+            }
+
+            const transcript = response.headers.get('X-Transcript') || '(no transcript)';
+            const audioBlob = await response.blob();
+            const url = registerAudioBlob(audioBlob);
+            const followUp: ImageSearchFollowUp = {
+                id: `img-follow-${Date.now()}`,
+                transcript,
+                audioUrl: url,
+                timestamp: Date.now(),
+            };
+
+            if (resultId) {
+                setImageResults((prev) =>
+                    prev.map((result) =>
+                        result.id === resultId
+                            ? {
+                                  ...result,
+                                  followUps: [...result.followUps, followUp],
+                              }
+                            : result,
+                    ),
+                );
+                setImageQueryStatus((prev) => ({
+                    ...prev,
+                    [resultId]: 'Hold the button to ask about these images.',
+                }));
+            }
+
+            playAudioUrl(url);
+        },
+        [playAudioUrl, registerAudioBlob],
+    );
+
     const finishRecording = useCallback(
-        async (mode: 'audio' | 'images') => {
+        async (context: RecordingContext) => {
             const combined = new Blob(chunksRef.current, { type: 'audio/webm' });
             resetStream();
             if (combined.size === 0) {
                 throw new Error('Captured audio was empty; please try again.');
             }
             const wavBlob = await convertToWavBlob(combined);
-            if (mode === 'audio') {
+            if (context.mode === 'audio') {
                 await sendToAudioBackend(wavBlob);
-            } else {
+            } else if (context.mode === 'images') {
                 await sendToImageSearch(wavBlob);
+            } else {
+                await sendToAudioImage(
+                    wavBlob,
+                    context.imageUrls ?? [],
+                    context.resultId,
+                );
             }
         },
-        [convertToWavBlob, sendToAudioBackend, sendToImageSearch],
+        [convertToWavBlob, sendToAudioBackend, sendToAudioImage, sendToImageSearch],
     );
 
     const stopRecording = useCallback(() => {
@@ -289,9 +390,18 @@ const DemoPage = () => {
     }, []);
 
     const startRecording = useCallback(
-        async (mode: 'audio' | 'images') => {
-            if (isRecording || audioProcessing || imageProcessing) {
+        async (mode: RecordingMode, extra?: { imageUrls?: string[]; resultId?: string }) => {
+            if (isRecording || audioProcessing || imageProcessing || imageQueryProcessingId) {
                 return;
+            }
+            let contextExtra = extra;
+            if (mode === 'imageQuery') {
+                const urls = (extra?.imageUrls ?? []).filter((url) => url && url.trim() !== '');
+                if (urls.length === 0) {
+                    setError('No images available for this query.');
+                    return;
+                }
+                contextExtra = { ...extra, imageUrls: urls };
             }
             setError(null);
             try {
@@ -311,79 +421,163 @@ const DemoPage = () => {
                 };
 
                 recorder.onstop = async () => {
+                    const context = recordingContextRef.current;
                     setIsRecording(false);
-                    const setProcessing = mode === 'audio' ? setAudioProcessing : setImageProcessing;
-                    const setStatus = mode === 'audio' ? setAudioStatus : setImageStatus;
-                    const defaultStatus = mode === 'audio' ? AUDIO_DEFAULT_STATUS : IMAGE_DEFAULT_STATUS;
-                    setProcessing(true);
-                    setStatus(mode === 'audio' ? 'Sending audio to the model...' : 'Searching for similar images...');
+                    if (!context) {
+                        recordingContextRef.current = null;
+                        return;
+                    }
+
+                    if (context.mode === 'audio') {
+                        setAudioProcessing(true);
+                        setAudioStatus('Sending audio to the model...');
+                    } else if (context.mode === 'images') {
+                        setImageProcessing(true);
+                        setImageStatus('Searching for similar images...');
+                    } else if (context.resultId) {
+                        setImageQueryProcessingId(context.resultId);
+                        setImageQueryStatus((prev) => ({
+                            ...prev,
+                            [context.resultId as string]: 'Sending audio with selected images to the model...',
+                        }));
+                    }
+
                     try {
-                        await finishRecording(mode);
-                        setStatus(defaultStatus);
+                        await finishRecording(context);
+                        if (context.mode === 'audio') {
+                            setAudioStatus(AUDIO_DEFAULT_STATUS);
+                        } else if (context.mode === 'images') {
+                            setImageStatus(IMAGE_DEFAULT_STATUS);
+                        }
                     } catch (sendError) {
                         const message = sendError instanceof Error ? sendError.message : 'Failed to process audio.';
                         setError(message);
-                        setStatus(defaultStatus);
+                        if (context.mode === 'audio') {
+                            setAudioStatus(AUDIO_DEFAULT_STATUS);
+                        } else if (context.mode === 'images') {
+                            setImageStatus(IMAGE_DEFAULT_STATUS);
+                        } else if (context.resultId) {
+                            setImageQueryStatus((prev) => ({
+                                ...prev,
+                                [context.resultId as string]: message,
+                            }));
+                        }
                     } finally {
-                        setProcessing(false);
-                        activeModeRef.current = null;
+                        if (context.mode === 'audio') {
+                            setAudioProcessing(false);
+                        } else if (context.mode === 'images') {
+                            setImageProcessing(false);
+                        } else if (context.resultId) {
+                            setImageQueryProcessingId(null);
+                            setImageQueryStatus((prev) => {
+                                const current = prev[context.resultId as string];
+                                const shouldReset =
+                                    !current ||
+                                    current === 'Recording... Release to send.' ||
+                                    current === 'Sending audio with selected images to the model...';
+                                return {
+                                    ...prev,
+                                    [context.resultId as string]: shouldReset
+                                        ? 'Hold the button to ask about these images.'
+                                        : current,
+                                };
+                            });
+                        }
+                        recordingContextRef.current = null;
                     }
                 };
 
                 recorder.start();
                 mediaRecorderRef.current = recorder;
-                activeModeRef.current = mode;
+                recordingContextRef.current = {
+                    mode,
+                    imageUrls: contextExtra?.imageUrls,
+                    resultId: contextExtra?.resultId,
+                };
                 setIsRecording(true);
                 if (mode === 'audio') {
                     setAudioStatus('Recording...');
-                } else {
+                } else if (mode === 'images') {
                     setImageStatus('Recording audio for image search...');
+                } else if (contextExtra?.resultId) {
+                    setImageQueryStatus((prev) => ({
+                        ...prev,
+                        [contextExtra.resultId as string]: 'Recording... Release to send.',
+                    }));
                 }
             } catch (err) {
                 const message = err instanceof Error ? err.message : 'Could not access the microphone.';
                 setError(message);
                 setIsRecording(false);
-                activeModeRef.current = null;
+                recordingContextRef.current = null;
                 if (mode === 'audio') {
                     setAudioStatus(AUDIO_DEFAULT_STATUS);
-                } else {
+                } else if (mode === 'images') {
                     setImageStatus(IMAGE_DEFAULT_STATUS);
+                } else if (contextExtra?.resultId) {
+                    setImageQueryStatus((prev) => ({
+                        ...prev,
+                        [contextExtra.resultId as string]: message,
+                    }));
                 }
             }
         },
-        [audioProcessing, finishRecording, imageProcessing, isRecording],
+        [audioProcessing, finishRecording, imageProcessing, imageQueryProcessingId, isRecording],
     );
 
     const audioButtonLabel =
-        isRecording && activeModeRef.current === 'audio'
+        isRecording && recordingContextRef.current?.mode === 'audio'
             ? 'Release to send'
             : audioProcessing
                 ? 'Processing audio…'
                 : 'Hold to talk';
 
     const imageButtonLabel =
-        isRecording && activeModeRef.current === 'images'
+        isRecording && recordingContextRef.current?.mode === 'images'
             ? 'Release to search'
             : imageProcessing
                 ? 'Searching images…'
                 : 'Hold to image search';
 
-    const audioButtonDisabled = audioProcessing || imageProcessing || (isRecording && activeModeRef.current === 'images');
-    const imageButtonDisabled = audioProcessing || imageProcessing || (isRecording && activeModeRef.current === 'audio');
+    const audioButtonDisabled =
+        audioProcessing ||
+        imageProcessing ||
+        imageQueryProcessingId !== null ||
+        (isRecording && recordingContextRef.current?.mode !== 'audio');
+    const imageButtonDisabled =
+        audioProcessing ||
+        imageProcessing ||
+        imageQueryProcessingId !== null ||
+        (isRecording && recordingContextRef.current?.mode !== 'images');
 
     const handleAudioStart = useCallback(() => startRecording('audio'), [startRecording]);
     const handleAudioStop = useCallback(() => {
-        if (activeModeRef.current === 'audio') {
+        if (recordingContextRef.current?.mode === 'audio') {
             stopRecording();
         }
     }, [stopRecording]);
 
     const handleImageStart = useCallback(() => startRecording('images'), [startRecording]);
     const handleImageStop = useCallback(() => {
-        if (activeModeRef.current === 'images') {
+        if (recordingContextRef.current?.mode === 'images') {
             stopRecording();
         }
     }, [stopRecording]);
+
+    const handleImageQueryStart = useCallback(
+        (resultId: string, imageUrls: string[]) => startRecording('imageQuery', { resultId, imageUrls }),
+        [startRecording],
+    );
+
+    const handleImageQueryStop = useCallback(
+        (resultId: string) => {
+            const context = recordingContextRef.current;
+            if (context?.mode === 'imageQuery' && context.resultId === resultId) {
+                stopRecording();
+            }
+        },
+        [stopRecording],
+    );
 
     const handlePlayHistory = useCallback(
         (url: string) => {
@@ -414,12 +608,20 @@ const DemoPage = () => {
                         </Typography>
                         <Button
                             variant="contained"
-                            color={isRecording && activeModeRef.current === 'audio' ? 'error' : 'primary'}
+                            color={
+                                isRecording && recordingContextRef.current?.mode === 'audio'
+                                    ? 'error'
+                                    : 'primary'
+                            }
                             size="large"
                             disabled={audioButtonDisabled}
                             onMouseDown={handleAudioStart}
                             onMouseUp={handleAudioStop}
-                            onMouseLeave={isRecording && activeModeRef.current === 'audio' ? handleAudioStop : undefined}
+                            onMouseLeave={
+                                isRecording && recordingContextRef.current?.mode === 'audio'
+                                    ? handleAudioStop
+                                    : undefined
+                            }
                             onTouchStart={handleAudioStart}
                             onTouchEnd={handleAudioStop}
                             sx={{ px: 6, py: 2, textTransform: 'none', fontSize: '1.1rem', fontWeight: 600 }}
@@ -443,12 +645,20 @@ const DemoPage = () => {
                         </Typography>
                         <Button
                             variant="contained"
-                            color={isRecording && activeModeRef.current === 'images' ? 'error' : 'secondary'}
+                            color={
+                                isRecording && recordingContextRef.current?.mode === 'images'
+                                    ? 'error'
+                                    : 'secondary'
+                            }
                             size="large"
                             disabled={imageButtonDisabled}
                             onMouseDown={handleImageStart}
                             onMouseUp={handleImageStop}
-                            onMouseLeave={isRecording && activeModeRef.current === 'images' ? handleImageStop : undefined}
+                            onMouseLeave={
+                                isRecording && recordingContextRef.current?.mode === 'images'
+                                    ? handleImageStop
+                                    : undefined
+                            }
                             onTouchStart={handleImageStart}
                             onTouchEnd={handleImageStop}
                             sx={{ px: 6, py: 2, textTransform: 'none', fontSize: '1.1rem', fontWeight: 600 }}
@@ -527,66 +737,143 @@ const DemoPage = () => {
                             </Typography>
                         ) : (
                             <Stack spacing={1.5}>
-                                {imageResults.map((result) => (
-                                    <Box
-                                        key={result.id}
-                                        sx={{
-                                            bgcolor: 'grey.100',
-                                            color: 'grey.900',
-                                            px: 2,
-                                            py: 1.5,
-                                            borderRadius: 2,
-                                            border: '1px solid',
-                                            borderColor: 'grey.300',
-                                        }}
-                                    >
-                                        <Typography variant="caption" color="text.secondary">
-                                            {new Date(result.timestamp).toLocaleTimeString()}
-                                        </Typography>
-                                        <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.5 }}>
-                                            Transcript: {result.transcript || '(empty)'}
-                                        </Typography>
-                                        {result.imageIds.length > 0 ? (
-                                            <Box
-                                                sx={{
-                                                    mt: 1.5,
-                                                    display: 'grid',
-                                                    gap: 1.5,
-                                                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-                                                }}
-                                            >
-                                                {result.imageIds.map((url) => (
-                                                    <Box
-                                                        key={url}
-                                                        sx={{
-                                                            position: 'relative',
-                                                            borderRadius: 2,
-                                                            overflow: 'hidden',
-                                                            bgcolor: 'grey.200',
-                                                            aspectRatio: '1 / 1',
-                                                        }}
-                                                    >
-                                                        <Box
-                                                            component="img"
-                                                            src={url}
-                                                            alt="Image search result"
-                                                            sx={{
-                                                                width: '100%',
-                                                                height: '100%',
-                                                                objectFit: 'cover',
-                                                                display: 'block',
-                                                            }}
-                                                        />
-                                                    </Box>
-                                                ))}
-                                            </Box>
-                                        ) : (
-                                            <Typography variant="body2" sx={{ mt: 0.5 }}>
-                                                Top image IDs: None returned
+                                {imageResults.map((result) => {
+                                    const queryStatusMessage =
+                                        imageQueryStatus[result.id] ?? 'Hold the button to ask about these images.';
+                                    const recordingContext = recordingContextRef.current;
+                                    const isGridRecording =
+                                        isRecording &&
+                                        recordingContext?.mode === 'imageQuery' &&
+                                        recordingContext?.resultId === result.id;
+                                    const isGridProcessing = imageQueryProcessingId === result.id;
+                                    const gridButtonDisabled =
+                                        audioProcessing ||
+                                        imageProcessing ||
+                                        isGridProcessing ||
+                                        imageQueryProcessingId !== null ||
+                                        (isRecording && !isGridRecording);
+                                    const gridButtonLabel = isGridRecording
+                                        ? 'Release to query'
+                                        : isGridProcessing
+                                            ? 'Processing query…'
+                                            : imageQueryProcessingId !== null
+                                                ? 'Please wait…'
+                                                : 'Hold to ask about these images';
+
+                                    return (
+                                        <Box
+                                            key={result.id}
+                                            sx={{
+                                                bgcolor: 'grey.100',
+                                                color: 'grey.900',
+                                                px: 2,
+                                                py: 1.5,
+                                                borderRadius: 2,
+                                                border: '1px solid',
+                                                borderColor: 'grey.300',
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                gap: 1.25,
+                                            }}
+                                        >
+                                            <Typography variant="caption" color="text.secondary">
+                                                {new Date(result.timestamp).toLocaleTimeString()}
                                             </Typography>
-                                        )}
-                                    </Box>
-                                ))}
+                                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                                Transcript: {result.transcript || '(empty)'}
+                                            </Typography>
+                                            {result.imageIds.length > 0 ? (
+                                                <Box
+                                                    sx={{
+                                                        mt: 0.5,
+                                                        display: 'grid',
+                                                        gap: 1.5,
+                                                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                                                    }}
+                                                >
+                                                    {result.imageIds.map((url) => (
+                                                        <Box
+                                                            key={url}
+                                                            sx={{
+                                                                position: 'relative',
+                                                                borderRadius: 2,
+                                                                overflow: 'hidden',
+                                                                bgcolor: 'grey.200',
+                                                                aspectRatio: '1 / 1',
+                                                            }}
+                                                        >
+                                                            <Box
+                                                                component="img"
+                                                                src={url}
+                                                                alt="Image search result"
+                                                                sx={{
+                                                                    width: '100%',
+                                                                    height: '100%',
+                                                                    objectFit: 'cover',
+                                                                    display: 'block',
+                                                                }}
+                                                            />
+                                                        </Box>
+                                                    ))}
+                                                </Box>
+                                            ) : (
+                                                <Typography variant="body2">
+                                                    Top image IDs: None returned
+                                                </Typography>
+                                            )}
+
+                                            <Stack spacing={1} alignItems="flex-start">
+                                                <Button
+                                                    variant="contained"
+                                                    color={isGridRecording ? 'error' : 'primary'}
+                                                    size="small"
+                                                    disabled={gridButtonDisabled}
+                                                    onMouseDown={() => handleImageQueryStart(result.id, result.imageIds)}
+                                                    onMouseUp={() => handleImageQueryStop(result.id)}
+                                                    onMouseLeave={isGridRecording ? () => handleImageQueryStop(result.id) : undefined}
+                                                    onTouchStart={() => handleImageQueryStart(result.id, result.imageIds)}
+                                                    onTouchEnd={() => handleImageQueryStop(result.id)}
+                                                    sx={{ textTransform: 'none', fontWeight: 600 }}
+                                                >
+                                                    {gridButtonLabel}
+                                                </Button>
+                                                <Typography variant="body2" color="text.secondary">
+                                                    {queryStatusMessage}
+                                                </Typography>
+                                            </Stack>
+
+                                            {result.followUps.length > 0 ? (
+                                                <Stack spacing={1.25} sx={{ mt: 0.5 }}>
+                                                    {result.followUps.map((follow) => (
+                                                        <Box
+                                                            key={follow.id}
+                                                            sx={{
+                                                                display: 'flex',
+                                                                alignItems: 'center',
+                                                                gap: 1,
+                                                                flexWrap: 'wrap',
+                                                            }}
+                                                        >
+                                                            <Button
+                                                                variant="outlined"
+                                                                color="inherit"
+                                                                size="small"
+                                                                onClick={() => handlePlayHistory(follow.audioUrl)}
+                                                                sx={{ textTransform: 'none' }}
+                                                            >
+                                                                ▶ Play
+                                                            </Button>
+                                                            <Typography variant="caption" color="text.secondary">
+                                                                {new Date(follow.timestamp).toLocaleTimeString()}
+                                                            </Typography>
+                                                            <Typography variant="body2">{follow.transcript}</Typography>
+                                                        </Box>
+                                                    ))}
+                                                </Stack>
+                                            ) : null}
+                                        </Box>
+                                    );
+                                })}
                             </Stack>
                         )}
                     </Stack>

@@ -143,6 +143,7 @@ def _prepare_generation_inputs(
     user_audio: np.ndarray,
     sample_rate: int,
     system_prompt: str = SYSTEM_PROMPT,
+    user_content_prefix: Optional[List[dict]] = None,
 ) -> Tuple[Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor, BatchEncoding, str]:
     model, processor = _load_model()
     # Many helper utilities (process_mm_info) expect an audio path.
@@ -159,9 +160,14 @@ def _prepare_generation_inputs(
             sample_rate,
         )
 
+    user_content: List[dict] = []
+    if user_content_prefix:
+        user_content.extend(user_content_prefix)
+    user_content.append({"type": "audio", "audio": audio_path})
+
     messages = [
         {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
-        {"role": "user", "content": [{"type": "audio", "audio": audio_path}]},
+        {"role": "user", "content": user_content},
     ]
 
     chat_text = processor.apply_chat_template(
@@ -312,6 +318,120 @@ def _transcribe(user_audio: np.ndarray, sample_rate: int) -> str:
     return result.strip()
 
 
+def _parse_image_field(value: str) -> List[str]:
+    value = value.strip()
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        parsed = None
+
+    def _normalise(seq) -> List[str]:
+        return [str(item).strip() for item in seq if str(item).strip()]
+
+    if isinstance(parsed, str):
+        parsed = parsed.strip()
+        return [parsed] if parsed else []
+    if isinstance(parsed, (list, tuple)):
+        return _normalise(parsed)
+    if isinstance(parsed, dict):
+        for key in ("images", "urls", "image_urls"):
+            maybe = parsed.get(key)
+            if isinstance(maybe, (list, tuple)):
+                return _normalise(maybe)
+            if isinstance(maybe, str) and maybe.strip():
+                return [maybe.strip()]
+    if "," in value:
+        return [part.strip() for part in value.split(",") if part.strip()]
+    return [value]
+
+
+def _extract_image_urls(form) -> List[str]:
+    urls: List[str] = []
+    raw_values: List[str] = []
+    for key in ("images", "image_urls", "images[]", "image_url"):
+        raw_values.extend(form.getlist(key))
+    for raw in raw_values:
+        if raw is None:
+            continue
+        urls.extend(_parse_image_field(str(raw)))
+
+    deduped: List[str] = []
+    seen = set()
+    for url in urls:
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        deduped.append(url)
+    return deduped
+
+
+def _collect_image_content(request) -> Tuple[List[dict], List[str], List[str]]:
+    content: List[dict] = []
+    cleanup_paths: List[str] = []
+    display: List[str] = []
+
+    for url in _extract_image_urls(request.form):
+        content.append({"type": "image", "image": url})
+        display.append(url)
+
+    for key in ("image", "images", "image[]"):
+        for storage in request.files.getlist(key):
+            if storage is None:
+                continue
+            filename = storage.filename or "uploaded_image"
+            _, ext = os.path.splitext(filename)
+            if not ext:
+                ext = ".png"
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                storage.save(tmp.name)
+                tmp_path = tmp.name
+            content.append({"type": "image", "image": tmp_path})
+            cleanup_paths.append(tmp_path)
+            display.append(filename)
+
+    return content, cleanup_paths, display
+
+
+def _generate_with_images(
+    user_audio: np.ndarray,
+    sample_rate: int,
+    image_content: List[dict],
+) -> GenerationResult:
+    model, processor, inputs, audio_path = _prepare_generation_inputs(
+        user_audio,
+        sample_rate,
+        user_content_prefix=image_content,
+    )
+
+    try:
+        with torch.inference_mode():
+            output = model.generate(
+                **inputs,
+                use_audio_in_video=True,
+                return_audio=True,
+            )
+    finally:
+        _cleanup_temp_file(audio_path)
+
+    decoded = processor.batch_decode(
+        output[0], skip_special_tokens=True, clean_up_tokenization_spaces=False
+    )
+    text = decoded[0] if decoded else ""
+    audio_tensor = output[1]
+    audio_np: Optional[np.ndarray] = None
+    try:
+        if audio_tensor is not None:
+            if hasattr(audio_tensor, "detach"):
+                audio_tensor = audio_tensor.detach().cpu()
+            audio_np = np.array(audio_tensor).reshape(-1).astype(np.float32)
+    except Exception:  # noqa: BLE001
+        audio_np = None
+
+    return GenerationResult(text=text, audio=audio_np)
+
+
 def _get_image_collection() -> Collection:
     global _mongo_client, _image_collection
     if _image_collection is not None:
@@ -446,6 +566,60 @@ def image_search_from_audio() -> Response:
             "count": len(results),
         }
     )
+
+
+@_app.route("/api/v1/audio-image", methods=["POST", "OPTIONS"])
+def audio_image_query() -> Response:
+    if request.method == "OPTIONS":
+        return _app.make_response(("", 204))
+
+    if "audio" not in request.files:
+        return jsonify({"error": "Expected form field 'audio'"}), 400
+
+    image_content, image_cleanup, display_images = _collect_image_content(request)
+    if not image_content:
+        return jsonify({"error": "Expected at least one image via 'images' or 'image' fields"}), 400
+
+    try:
+        user_audio, in_sr = _decode_audio(request.files["audio"])
+    except Exception as exc:  # noqa: BLE001
+        for path in image_cleanup:
+            _cleanup_temp_file(path)
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        gen = _generate_with_images(user_audio, in_sr, image_content)
+    except Exception as exc:  # noqa: BLE001
+        _log.exception("Audio-image generation failed")
+        for path in image_cleanup:
+            _cleanup_temp_file(path)
+        return jsonify({"error": f"Generation failed: {exc}"}), 500
+
+    transcript = gen.text.replace("\n", " ").strip()
+    if len(transcript) > 512:
+        transcript = transcript[:509] + "..."
+
+    if gen.audio is None or gen.audio.size == 0:
+        for path in image_cleanup:
+            _cleanup_temp_file(path)
+        return jsonify(
+            {
+                "error": "Model produced no audio output",
+                "model": MODEL_NAME,
+                "transcript": transcript,
+                "images": display_images,
+            }
+        ), 502
+
+    wav_bytes = _encode_wav(gen.audio, OUTPUT_SAMPLE_RATE)
+    for path in image_cleanup:
+        _cleanup_temp_file(path)
+    resp = Response(wav_bytes, mimetype="audio/wav")
+    resp.headers["X-Model"] = MODEL_NAME
+    resp.headers["X-Transcript"] = transcript
+    resp.headers["X-Images"] = json.dumps(display_images)
+    resp.headers["Content-Length"] = str(len(wav_bytes))
+    return resp
 
 
 if __name__ == "__main__":  # pragma: no cover - manual run
