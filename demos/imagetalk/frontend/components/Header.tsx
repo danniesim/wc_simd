@@ -18,7 +18,7 @@ const Header = () => {
         <AppBar position="static" color="primary" elevation={0}>
             <Toolbar sx={{ gap: 3 }}>
                 <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 600 }}>
-                    ImageTalk
+                    ImageTalk - Wellcome Collection
                 </Typography>
                 <Stack direction="row" spacing={1.5} component="nav">
                     {NAV_LINKS.map((link) => (

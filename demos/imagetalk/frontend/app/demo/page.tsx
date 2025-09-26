@@ -625,7 +625,7 @@ const DemoPage = () => {
                 </Typography>
                 <Typography variant="body1" color="text.secondary" maxWidth={620}>
                     Hold the microphone button to record audio. When you let go, the recording is sent to the backend
-                    running Qwen2.5-Omni, which returns both text and synthesized speech that plays instantly.
+                    running Qwen2.5-Omni, which returns both text and synthesized speech. (It might take a while.)
                 </Typography>
             </Stack>
 

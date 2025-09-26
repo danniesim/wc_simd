@@ -5,7 +5,7 @@ import { ThemeRegistry } from '../components/ThemeRegistry';
 import './globals.css';
 
 export const metadata: Metadata = {
-    title: 'ImageTalk',
+    title: 'ImageTalk - Wellcome Collection',
     description: 'Interactive image conversation demo.',
 };
 
