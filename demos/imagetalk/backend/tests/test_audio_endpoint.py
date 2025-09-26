@@ -2,6 +2,9 @@ import io
 import os
 from pathlib import Path
 
+import json
+import urllib.request
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -15,7 +18,6 @@ def client():
     return imagetalk._app.test_client()
 
 
-@pytest.mark.slow
 def test_audio_in_audio_out_endpoint(client):
     """Integration test for mandatory audio -> audio behavior.
 
@@ -75,3 +77,74 @@ def test_audio_in_audio_out_endpoint(client):
     transcript_path = out_path.with_suffix(".txt")
     with transcript_path.open("w", encoding="utf-8") as tf:
         tf.write(transcript + "\n")
+
+
+def _embed_service_available() -> bool:
+    try:
+        req = urllib.request.Request(
+            imagetalk.EMBED_SERVICE_URL,
+            data=json.dumps({"texts": ["ping"]}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=imagetalk.EMBED_TIMEOUT_SECONDS) as resp:
+            return resp.status == 200
+    except Exception:  # noqa: BLE001 - best effort probe
+        return False
+
+
+def _mongo_available() -> bool:
+    try:
+        collection = imagetalk._get_image_collection()
+        # Provide a lightweight query to confirm DB reachability.
+        collection.find_one()
+        return True
+    except Exception:  # noqa: BLE001 - include connection/auth failures
+        return False
+
+
+def test_images_from_audio_endpoint(client):
+    # if os.getenv("IMAGETALK_SKIP_MODEL_TEST") == "1":
+    #     pytest.skip("Skipping heavy model test via IMAGETALK_SKIP_MODEL_TEST")
+
+    # if not _embed_service_available():
+    #     pytest.skip("Embed service not reachable")
+
+    # if not _mongo_available():
+    #     pytest.skip("MongoDB image collection not reachable")
+
+    wav_fixture = Path(__file__).parent / "bcn_weather_short.wav"
+    # if not wav_fixture.exists():
+    #     pytest.skip("Test audio sample missing")
+
+    with wav_fixture.open("rb") as f:
+        wav_buf = io.BytesIO(f.read())
+        wav_buf.seek(0)
+
+    response = client.post(
+        "/api/v1/images/from-audio",
+        data={"audio": (wav_buf, wav_fixture.name)},
+        content_type="multipart/form-data",
+    )
+
+    if response.status_code != 200:
+        raise AssertionError(
+            f"Expected 200, got {response.status_code}: {response.get_data(as_text=True)}"
+        )
+
+    payload = response.get_json()
+    assert payload is not None
+    assert "transcript" in payload and payload["transcript"].strip() != ""
+    assert "image_ids" in payload
+    image_ids = payload["image_ids"]
+    assert isinstance(image_ids, list)
+    assert 0 < len(image_ids) <= imagetalk.DEFAULT_TOP_K
+    for iid in image_ids:
+        assert isinstance(iid, str) and iid.strip() != ""
+
+    assert "results" in payload
+    for result in payload["results"]:
+        assert "image_id" in result
+        assert result.get("image_id") in image_ids
+
+    assert payload.get("count") == len(payload["results"])

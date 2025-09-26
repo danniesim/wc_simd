@@ -1,0 +1,17 @@
+[project]
+name = "imagetalk-embed-backend"
+version = "0.1.0"
+description = "Flask embedding backend for the ImageTalk push-to-talk demo."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "accelerate>=1.10.1",
+    "flash-attn>=2.8.3",
+    "flask>=3.1,<4.0",
+    "ipykernel>=6.30.1",
+    "ipywidgets>=8.1.7",
+    "pillow>=11.3.0",
+    "pytest>=8.4.2",
+    "torch>=2.3,<3.0",
+    "tqdm>=4.67.1",
+    "transformers>=4.51.2,<4.52.0",
+]

@@ -20,6 +20,7 @@ dependencies = [
     "soundfile>=0.12,<0.15",
     "torch>=2.3,<3.0",
     "torchvision>=0.23.0",
+    "tqdm>=4.67.1",
     "transformers @ git+https://github.com/huggingface/transformers.git",
     "vllm[audio]>=0.10.2",
 ]

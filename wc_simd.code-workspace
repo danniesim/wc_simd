@@ -8,6 +8,9 @@
 		},
 		{
 			"path": "demos/imagetalk/frontend"
+		},
+		{
+			"path": "demos/imagetalk/embed_backend"
 		}
 	],
 	"settings": {}

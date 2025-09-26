@@ -1,0 +1,18 @@
+services:
+  mongodb:
+    image: mongodb/mongodb-atlas-local:latest
+    container_name: mongodb-atlas-local
+    environment:
+      MONGODB_INITDB_ROOT_USERNAME: user
+      MONGODB_INITDB_ROOT_PASSWORD: pass
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "mongodb://user:pass@localhost:27017/?directConnection=true", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - mongo_data:/data/db
+volumes:
+  mongo_data:
