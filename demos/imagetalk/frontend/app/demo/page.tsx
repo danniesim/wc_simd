@@ -179,10 +179,40 @@ const DemoPage = () => {
         return audioContextRef.current;
     };
 
-    const convertToWavBlob = useCallback(async (blob: Blob): Promise<Blob> => {
-        const ctx = ensureAudioContext();
+    const withDecodedAudio = useCallback(async (blob: Blob): Promise<AudioBuffer> => {
         const arrayBuffer = await blob.arrayBuffer();
-        const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0));
+
+        const decodeWith = (ctx: AudioContext) =>
+            new Promise<AudioBuffer>((resolve, reject) => {
+                ctx.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
+            });
+
+        const primaryContext = ensureAudioContext();
+        try {
+            return await decodeWith(primaryContext);
+        } catch (primaryError) {
+            console.warn('Primary audio decode failed, retrying with fresh AudioContext', primaryError);
+            try {
+                if (audioContextRef.current) {
+                    await audioContextRef.current.close();
+                }
+            } catch (closeError) {
+                console.warn('Failed closing AudioContext after decode failure', closeError);
+            }
+            audioContextRef.current = getAudioContext();
+            try {
+                return await decodeWith(audioContextRef.current);
+            } catch (retryError) {
+                console.error('Secondary audio decode failed', retryError);
+                throw new Error(
+                    'Unable to decode recorded audio. Please try holding the button a little longer or use a Chromium-based browser.',
+                );
+            }
+        }
+    }, []);
+
+    const convertToWavBlob = useCallback(async (blob: Blob): Promise<Blob> => {
+        const decoded = await withDecodedAudio(blob);
 
         const { length, numberOfChannels, sampleRate } = decoded;
         const mono = new Float32Array(length);
@@ -195,7 +225,7 @@ const DemoPage = () => {
 
         const wavBuffer = encodeWav(mono, sampleRate);
         return new Blob([wavBuffer], { type: 'audio/wav' });
-    }, []);
+    }, [withDecodedAudio]);
 
     const registerAudioBlob = useCallback((blob: Blob): string => {
         const url = URL.createObjectURL(blob);

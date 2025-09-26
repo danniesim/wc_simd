@@ -30,6 +30,7 @@ from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from transformers import (
     Qwen2_5OmniForConditionalGeneration,
@@ -83,6 +84,12 @@ VECTOR_NUM_CANDIDATES = int(
         "IMAGETALK_VECTOR_CANDIDATES",
         "200"))
 DEFAULT_TOP_K = int(os.environ.get("IMAGETALK_VECTOR_TOP_K", "4"))
+IMAGE_FETCH_TIMEOUT_SECONDS = float(
+    os.environ.get("IMAGETALK_IMAGE_FETCH_TIMEOUT", "10")
+)
+IMAGE_FETCH_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; Python script)",
+}
 
 _app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -342,8 +349,6 @@ def _parse_image_field(value: str) -> List[str]:
                 return _normalise(maybe)
             if isinstance(maybe, str) and maybe.strip():
                 return [maybe.strip()]
-    if "," in value:
-        return [part.strip() for part in value.split(",") if part.strip()]
     return [value]
 
 
@@ -373,8 +378,29 @@ def _collect_image_content(request) -> Tuple[List[dict], List[str], List[str]]:
     display: List[str] = []
 
     for url in _extract_image_urls(request.form):
-        content.append({"type": "image", "image": url})
-        display.append(url)
+        normalized = url.strip()
+        if not normalized:
+            continue
+        parsed = urlparse(normalized)
+        if parsed.scheme in {"http", "https"}:
+            try:
+                req = Request(normalized, headers=IMAGE_FETCH_HEADERS)
+                with urlopen(req, timeout=IMAGE_FETCH_TIMEOUT_SECONDS) as resp:
+                    data = resp.read()
+                    suffix = os.path.splitext(parsed.path)[1] or ".jpg"
+                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                        tmp.write(data)
+                        tmp_path = tmp.name
+                content.append({"type": "image", "image": tmp_path})
+                cleanup_paths.append(tmp_path)
+                display.append(normalized)
+            except Exception as exc:  # noqa: BLE001
+                for path in cleanup_paths:
+                    _cleanup_temp_file(path)
+                raise ValueError(f"Failed to fetch image URL {normalized}: {exc}") from exc
+        else:
+            content.append({"type": "image", "image": normalized})
+            display.append(normalized)
 
     for key in ("image", "images", "image[]"):
         for storage in request.files.getlist(key):
@@ -576,7 +602,10 @@ def audio_image_query() -> Response:
     if "audio" not in request.files:
         return jsonify({"error": "Expected form field 'audio'"}), 400
 
-    image_content, image_cleanup, display_images = _collect_image_content(request)
+    try:
+        image_content, image_cleanup, display_images = _collect_image_content(request)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     if not image_content:
         return jsonify({"error": "Expected at least one image via 'images' or 'image' fields"}), 400
 
