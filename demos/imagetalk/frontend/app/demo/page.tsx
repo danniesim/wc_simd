@@ -11,9 +11,18 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-type ConversationEntry = {
-    role: 'user' | 'assistant';
-    text: string;
+type AudioHistoryEntry = {
+    id: string;
+    url: string;
+    transcript: string;
+    timestamp: number;
+};
+
+type ImageSearchResult = {
+    id: string;
+    transcript: string;
+    imageIds: string[];
+    timestamp: number;
 };
 
 const API_BASE = process.env.NEXT_PUBLIC_IMAGETALK_API_BASE_URL ?? 'http://localhost:8000';
@@ -75,26 +84,42 @@ const encodeWav = (samples: Float32Array, sampleRate: number): ArrayBuffer => {
     return buffer;
 };
 
+const AUDIO_DEFAULT_STATUS = 'Hold the button to record. Release to send.';
+const IMAGE_DEFAULT_STATUS = 'Hold the button to capture audio for image search.';
+
 const DemoPage = () => {
     const [isRecording, setIsRecording] = useState(false);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [conversation, setConversation] = useState<ConversationEntry[]>([]);
+    const [audioProcessing, setAudioProcessing] = useState(false);
+    const [imageProcessing, setImageProcessing] = useState(false);
+    const [audioHistory, setAudioHistory] = useState<AudioHistoryEntry[]>([]);
+    const [imageResults, setImageResults] = useState<ImageSearchResult[]>([]);
     const [error, setError] = useState<string | null>(null);
     const [sessionId, setSessionId] = useState<string | null>(null);
-    const [statusMessage, setStatusMessage] = useState('Hold the button to record. Release to send.');
+    const [audioStatus, setAudioStatus] = useState(AUDIO_DEFAULT_STATUS);
+    const [imageStatus, setImageStatus] = useState(IMAGE_DEFAULT_STATUS);
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const chunksRef = useRef<Blob[]>([]);
     const streamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const playbackUrlRef = useRef<string | null>(null);
+    const audioUrlsRef = useRef<string[]>([]);
+    const activeModeRef = useRef<'audio' | 'images' | null>(null);
 
-    const instructions = useMemo(
+    const audioTips = useMemo(
         () => [
             'Allow microphone access when prompted.',
             'Press and hold the button while you speak.',
             'Release the button to send audio to Qwen.',
             'The response audio plays automatically.',
+        ],
+        [],
+    );
+
+    const imageTips = useMemo(
+        () => [
+            'Press and hold to capture a query for image search.',
+            'We transcribe your speech before embedding.',
+            'Returns the top 4 matching image IDs from the gallery.',
         ],
         [],
     );
@@ -117,13 +142,17 @@ const DemoPage = () => {
             void audioContextRef.current.close();
             audioContextRef.current = null;
         }
-        if (playbackUrlRef.current) {
-            URL.revokeObjectURL(playbackUrlRef.current);
-            playbackUrlRef.current = null;
-        }
+        activeModeRef.current = null;
     }, []);
 
-    useEffect(() => () => cleanup(), [cleanup]);
+    useEffect(
+        () => () => {
+            cleanup();
+            audioUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+            audioUrlsRef.current = [];
+        },
+        [cleanup],
+    );
 
     const ensureAudioContext = () => {
         if (!audioContextRef.current) {
@@ -150,17 +179,18 @@ const DemoPage = () => {
         return new Blob([wavBuffer], { type: 'audio/wav' });
     }, []);
 
-    const playWavBlob = (blob: Blob) => {
-        if (playbackUrlRef.current) {
-            URL.revokeObjectURL(playbackUrlRef.current);
-        }
+    const registerAudioBlob = useCallback((blob: Blob): string => {
         const url = URL.createObjectURL(blob);
-        playbackUrlRef.current = url;
+        audioUrlsRef.current.push(url);
+        return url;
+    }, []);
+
+    const playAudioUrl = useCallback((url: string) => {
         const audio = new Audio(url);
         void audio.play();
-    };
+    }, []);
 
-    const sendToBackend = useCallback(async (wavBlob: Blob) => {
+    const sendToAudioBackend = useCallback(async (wavBlob: Blob) => {
         const form = new FormData();
         form.append('audio', wavBlob, 'recording.wav');
         if (sessionId) form.append('session_id', sessionId);
@@ -188,26 +218,66 @@ const DemoPage = () => {
         if (!sessionId && newSessionId) setSessionId(newSessionId);
         const transcript = response.headers.get('X-Transcript') || '(no transcript)';
 
-        // Add conversation entries
-        setConversation((prev) => [
-            ...prev,
-            { role: 'user', text: '🎤 Sent an audio message' },
-            { role: 'assistant', text: transcript },
-        ]);
-
         const audioBlob = await response.blob();
-        playWavBlob(audioBlob);
-    }, [sessionId]);
+        const url = registerAudioBlob(audioBlob);
+        const entry: AudioHistoryEntry = {
+            id: `resp-${Date.now()}`,
+            url,
+            transcript,
+            timestamp: Date.now(),
+        };
+        setAudioHistory((prev) => [...prev, entry]);
+        playAudioUrl(url);
+    }, [playAudioUrl, registerAudioBlob, sessionId]);
 
-    const processRecording = useCallback(async () => {
-        const combined = new Blob(chunksRef.current, { type: 'audio/webm' });
-        resetStream();
-        if (combined.size === 0) {
-            throw new Error('Captured audio was empty; please try again.');
+    const sendToImageSearch = useCallback(async (wavBlob: Blob) => {
+        const form = new FormData();
+        form.append('audio', wavBlob, 'recording.wav');
+
+        const response = await fetch(`${API_BASE}/api/v1/images/from-audio`, { method: 'POST', body: form });
+        if (!response.ok) {
+            let msg: string;
+            try {
+                const txt = await response.text();
+                msg = txt || 'Image search request failed';
+            } catch {
+                msg = 'Image search request failed';
+            }
+            throw new Error(msg);
         }
-        const wavBlob = await convertToWavBlob(combined);
-        await sendToBackend(wavBlob);
-    }, [convertToWavBlob, sendToBackend]);
+
+        const payload = await response.json();
+        const transcript: string = typeof payload?.transcript === 'string' ? payload.transcript : '';
+        const rawImageIds = payload?.image_ids ?? payload?.imageIds;
+        const imageIds: string[] = Array.isArray(rawImageIds)
+            ? rawImageIds.map((id: unknown) => (id == null ? '' : String(id))).filter((id: string) => id.trim() !== '')
+            : [];
+
+        const entry: ImageSearchResult = {
+            id: `img-${Date.now()}`,
+            transcript,
+            imageIds: imageIds.slice(0, 4),
+            timestamp: Date.now(),
+        };
+        setImageResults((prev) => [entry, ...prev]);
+    }, []);
+
+    const finishRecording = useCallback(
+        async (mode: 'audio' | 'images') => {
+            const combined = new Blob(chunksRef.current, { type: 'audio/webm' });
+            resetStream();
+            if (combined.size === 0) {
+                throw new Error('Captured audio was empty; please try again.');
+            }
+            const wavBlob = await convertToWavBlob(combined);
+            if (mode === 'audio') {
+                await sendToAudioBackend(wavBlob);
+            } else {
+                await sendToImageSearch(wavBlob);
+            }
+        },
+        [convertToWavBlob, sendToAudioBackend, sendToImageSearch],
+    );
 
     const stopRecording = useCallback(() => {
         if (!mediaRecorderRef.current) {
@@ -218,55 +288,109 @@ const DemoPage = () => {
         }
     }, []);
 
-    const startRecording = useCallback(async () => {
-        if (isProcessing) {
-            return;
-        }
-        setError(null);
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            streamRef.current = stream;
+    const startRecording = useCallback(
+        async (mode: 'audio' | 'images') => {
+            if (isRecording || audioProcessing || imageProcessing) {
+                return;
+            }
+            setError(null);
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                streamRef.current = stream;
 
-            const options: MediaRecorderOptions | undefined = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-                ? { mimeType: 'audio/webm;codecs=opus' }
-                : undefined;
-            const recorder = new MediaRecorder(stream, options);
-            chunksRef.current = [];
+                const options: MediaRecorderOptions | undefined = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                    ? { mimeType: 'audio/webm;codecs=opus' }
+                    : undefined;
+                const recorder = new MediaRecorder(stream, options);
+                chunksRef.current = [];
 
-            recorder.ondataavailable = (event: BlobEvent) => {
-                if (event.data.size > 0) {
-                    chunksRef.current.push(event.data);
+                recorder.ondataavailable = (event: BlobEvent) => {
+                    if (event.data.size > 0) {
+                        chunksRef.current.push(event.data);
+                    }
+                };
+
+                recorder.onstop = async () => {
+                    setIsRecording(false);
+                    const setProcessing = mode === 'audio' ? setAudioProcessing : setImageProcessing;
+                    const setStatus = mode === 'audio' ? setAudioStatus : setImageStatus;
+                    const defaultStatus = mode === 'audio' ? AUDIO_DEFAULT_STATUS : IMAGE_DEFAULT_STATUS;
+                    setProcessing(true);
+                    setStatus(mode === 'audio' ? 'Sending audio to the model...' : 'Searching for similar images...');
+                    try {
+                        await finishRecording(mode);
+                        setStatus(defaultStatus);
+                    } catch (sendError) {
+                        const message = sendError instanceof Error ? sendError.message : 'Failed to process audio.';
+                        setError(message);
+                        setStatus(defaultStatus);
+                    } finally {
+                        setProcessing(false);
+                        activeModeRef.current = null;
+                    }
+                };
+
+                recorder.start();
+                mediaRecorderRef.current = recorder;
+                activeModeRef.current = mode;
+                setIsRecording(true);
+                if (mode === 'audio') {
+                    setAudioStatus('Recording...');
+                } else {
+                    setImageStatus('Recording audio for image search...');
                 }
-            };
-
-            recorder.onstop = async () => {
+            } catch (err) {
+                const message = err instanceof Error ? err.message : 'Could not access the microphone.';
+                setError(message);
                 setIsRecording(false);
-                setIsProcessing(true);
-                setStatusMessage('Sending audio to the model...');
-                try {
-                    await processRecording();
-                    setStatusMessage('Hold the button to record. Release to send.');
-                } catch (sendError) {
-                    const message = sendError instanceof Error ? sendError.message : 'Failed to process audio.';
-                    setError(message);
-                    setStatusMessage('Hold the button to record. Release to send.');
-                } finally {
-                    setIsProcessing(false);
+                activeModeRef.current = null;
+                if (mode === 'audio') {
+                    setAudioStatus(AUDIO_DEFAULT_STATUS);
+                } else {
+                    setImageStatus(IMAGE_DEFAULT_STATUS);
                 }
-            };
+            }
+        },
+        [audioProcessing, finishRecording, imageProcessing, isRecording],
+    );
 
-            recorder.start();
-            mediaRecorderRef.current = recorder;
-            setIsRecording(true);
-            setStatusMessage('Recording...');
-        } catch (err) {
-            const message = err instanceof Error ? err.message : 'Could not access the microphone.';
-            setError(message);
-            setIsRecording(false);
+    const audioButtonLabel =
+        isRecording && activeModeRef.current === 'audio'
+            ? 'Release to send'
+            : audioProcessing
+                ? 'Processing audio…'
+                : 'Hold to talk';
+
+    const imageButtonLabel =
+        isRecording && activeModeRef.current === 'images'
+            ? 'Release to search'
+            : imageProcessing
+                ? 'Searching images…'
+                : 'Hold to image search';
+
+    const audioButtonDisabled = audioProcessing || imageProcessing || (isRecording && activeModeRef.current === 'images');
+    const imageButtonDisabled = audioProcessing || imageProcessing || (isRecording && activeModeRef.current === 'audio');
+
+    const handleAudioStart = useCallback(() => startRecording('audio'), [startRecording]);
+    const handleAudioStop = useCallback(() => {
+        if (activeModeRef.current === 'audio') {
+            stopRecording();
         }
-    }, [isProcessing, processRecording]);
+    }, [stopRecording]);
 
-    const buttonLabel = isRecording ? 'Release to send' : isProcessing ? 'Processing audio…' : 'Hold to talk';
+    const handleImageStart = useCallback(() => startRecording('images'), [startRecording]);
+    const handleImageStop = useCallback(() => {
+        if (activeModeRef.current === 'images') {
+            stopRecording();
+        }
+    }, [stopRecording]);
+
+    const handlePlayHistory = useCallback(
+        (url: string) => {
+            playAudioUrl(url);
+        },
+        [playAudioUrl],
+    );
 
     return (
         <Stack spacing={4}>
@@ -286,24 +410,53 @@ const DemoPage = () => {
                 <CardContent>
                     <Stack spacing={3} alignItems="center">
                         <Typography variant="subtitle1" color="text.secondary">
-                            {statusMessage}
+                            {audioStatus}
                         </Typography>
                         <Button
                             variant="contained"
-                            color={isRecording ? 'error' : 'primary'}
+                            color={isRecording && activeModeRef.current === 'audio' ? 'error' : 'primary'}
                             size="large"
-                            disabled={isProcessing}
-                            onMouseDown={startRecording}
-                            onMouseUp={stopRecording}
-                            onMouseLeave={isRecording ? stopRecording : undefined}
-                            onTouchStart={startRecording}
-                            onTouchEnd={stopRecording}
+                            disabled={audioButtonDisabled}
+                            onMouseDown={handleAudioStart}
+                            onMouseUp={handleAudioStop}
+                            onMouseLeave={isRecording && activeModeRef.current === 'audio' ? handleAudioStop : undefined}
+                            onTouchStart={handleAudioStart}
+                            onTouchEnd={handleAudioStop}
                             sx={{ px: 6, py: 2, textTransform: 'none', fontSize: '1.1rem', fontWeight: 600 }}
                         >
-                            {buttonLabel}
+                            {audioButtonLabel}
                         </Button>
                         <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
-                            {instructions.map((tip) => (
+                            {audioTips.map((tip) => (
+                                <Chip key={tip} label={tip} color="default" />
+                            ))}
+                        </Stack>
+                    </Stack>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardContent>
+                    <Stack spacing={3} alignItems="center">
+                        <Typography variant="subtitle1" color="text.secondary">
+                            {imageStatus}
+                        </Typography>
+                        <Button
+                            variant="contained"
+                            color={isRecording && activeModeRef.current === 'images' ? 'error' : 'secondary'}
+                            size="large"
+                            disabled={imageButtonDisabled}
+                            onMouseDown={handleImageStart}
+                            onMouseUp={handleImageStop}
+                            onMouseLeave={isRecording && activeModeRef.current === 'images' ? handleImageStop : undefined}
+                            onTouchStart={handleImageStart}
+                            onTouchEnd={handleImageStop}
+                            sx={{ px: 6, py: 2, textTransform: 'none', fontSize: '1.1rem', fontWeight: 600 }}
+                        >
+                            {imageButtonLabel}
+                        </Button>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="center">
+                            {imageTips.map((tip) => (
                                 <Chip key={tip} label={tip} color="default" />
                             ))}
                         </Stack>
@@ -315,30 +468,123 @@ const DemoPage = () => {
                 <CardContent>
                     <Stack spacing={2}>
                         <Typography variant="h6" component="h2">
-                            Conversation
+                            Assistant Audio History
                         </Typography>
                         <Divider />
-                        {conversation.length === 0 ? (
+                        {audioHistory.length === 0 ? (
                             <Typography variant="body2" color="text.secondary">
-                                Your conversation will appear here after you send your first message.
+                                Assistant responses will appear here, ready for replay.
                             </Typography>
                         ) : (
                             <Stack spacing={1.5}>
-                                {conversation.map((entry, idx) => (
+                                {audioHistory.map((entry) => (
                                     <Box
-                                        key={`${entry.role}-${idx}`}
+                                        key={entry.id}
                                         sx={{
-                                            bgcolor: entry.role === 'assistant' ? 'primary.main' : 'grey.900',
+                                            bgcolor: 'grey.900',
                                             color: 'common.white',
                                             px: 2,
                                             py: 1.5,
                                             borderRadius: 2,
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 1,
                                         }}
                                     >
-                                        <Typography variant="caption" sx={{ opacity: 0.8 }}>
-                                            {entry.role === 'assistant' ? 'Qwen' : 'You'}
+                                        <Stack direction="row" spacing={1.5} alignItems="center">
+                                            <Button
+                                                variant="outlined"
+                                                color="inherit"
+                                                size="small"
+                                                onClick={() => handlePlayHistory(entry.url)}
+                                                sx={{ textTransform: 'none' }}
+                                            >
+                                                ▶ Play
+                                            </Button>
+                                            <Typography variant="caption" sx={{ opacity: 0.8 }}>
+                                                {new Date(entry.timestamp).toLocaleTimeString()}
+                                            </Typography>
+                                        </Stack>
+                                        <Typography variant="body2">{entry.transcript || '(no transcript)'}</Typography>
+                                    </Box>
+                                ))}
+                            </Stack>
+                        )}
+                    </Stack>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardContent>
+                    <Stack spacing={2}>
+                        <Typography variant="h6" component="h2">
+                            Image Search Results
+                        </Typography>
+                        <Divider />
+                        {imageResults.length === 0 ? (
+                            <Typography variant="body2" color="text.secondary">
+                                Use the image search push-to-talk button to fetch matching image IDs.
+                            </Typography>
+                        ) : (
+                            <Stack spacing={1.5}>
+                                {imageResults.map((result) => (
+                                    <Box
+                                        key={result.id}
+                                        sx={{
+                                            bgcolor: 'grey.100',
+                                            color: 'grey.900',
+                                            px: 2,
+                                            py: 1.5,
+                                            borderRadius: 2,
+                                            border: '1px solid',
+                                            borderColor: 'grey.300',
+                                        }}
+                                    >
+                                        <Typography variant="caption" color="text.secondary">
+                                            {new Date(result.timestamp).toLocaleTimeString()}
                                         </Typography>
-                                        <Typography variant="body2">{entry.text}</Typography>
+                                        <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.5 }}>
+                                            Transcript: {result.transcript || '(empty)'}
+                                        </Typography>
+                                        {result.imageIds.length > 0 ? (
+                                            <Box
+                                                sx={{
+                                                    mt: 1.5,
+                                                    display: 'grid',
+                                                    gap: 1.5,
+                                                    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                                                }}
+                                            >
+                                                {result.imageIds.map((url) => (
+                                                    <Box
+                                                        key={url}
+                                                        sx={{
+                                                            position: 'relative',
+                                                            borderRadius: 2,
+                                                            overflow: 'hidden',
+                                                            bgcolor: 'grey.200',
+                                                            aspectRatio: '1 / 1',
+                                                        }}
+                                                    >
+                                                        <Box
+                                                            component="img"
+                                                            src={url}
+                                                            alt="Image search result"
+                                                            sx={{
+                                                                width: '100%',
+                                                                height: '100%',
+                                                                objectFit: 'cover',
+                                                                display: 'block',
+                                                            }}
+                                                        />
+                                                    </Box>
+                                                ))}
+                                            </Box>
+                                        ) : (
+                                            <Typography variant="body2" sx={{ mt: 0.5 }}>
+                                                Top image IDs: None returned
+                                            </Typography>
+                                        )}
                                     </Box>
                                 ))}
                             </Stack>
