@@ -24,7 +24,7 @@ if [ "$1" == "upload" ]; then
 elif [ "$1" == "download" ]; then
     echo "Downloading $FILE_PATH from S3..."
 
-    python aws/download_from_s3.py --download --overwrite "$FILE_PATH.tar.gz"
+    python aws/upload_to_s3.py --download "$FILE_PATH.tar.gz"
 
     # Unzip and untar the file
     if [ -f "$FILE_PATH.tar.gz" ]; then
