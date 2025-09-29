@@ -24,11 +24,22 @@ if [ "$1" == "upload" ]; then
 elif [ "$1" == "download" ]; then
     echo "Downloading $FILE_PATH from S3..."
 
+    # Remove existing file if it exists
+    if [ -f "$FILE_PATH.tar.gz" ]; then
+        rm "$FILE_PATH.tar.gz"
+    fi
+
     python aws/upload_to_s3.py --download "$FILE_PATH.tar.gz"
+
+    # Check if the file was downloaded
+    if [ ! -f "$FILE_PATH.tar.gz" ]; then
+        echo "Download failed: $FILE_PATH.tar.gz does not exist."
+        exit 1
+    fi
 
     # Unzip and untar the file
     if [ -f "$FILE_PATH.tar.gz" ]; then
-        tar -xzvf "$FILE_PATH.tar.gz" -C data/
+        tar -xzf "$FILE_PATH.tar.gz"
     else
         echo "$FILE_PATH.tar.gz does not exist."
         exit 1
