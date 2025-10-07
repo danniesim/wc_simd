@@ -1,22 +1,27 @@
 """Aggregate individual embedded parquet shards into a single NumPy matrix.
 
 This script scans a glob of parquet files that contain at least the columns:
-	- image_id (or an override via --id-column)
-	- embedding (array[float])
+    - image_id (or an override via --id-column)
+    - embedding (array[float])
 
 It will:
  1. Filter out null / malformed embeddings
  2. (Optionally) ensure all embeddings have the expected dimensionality
  3. Deduplicate by the id column (first occurrence kept by default)
  4. Produce:
-		--output-npz : a compressed npz with key 'embeddings' (shape [N, D])
-		--output-index : a CSV / Parquet mapping row_index -> id
+        --output-npy : an *uncompressed* .npy file (shape [N, D])
+        --output-index : a CSV / Parquet mapping row_index -> id
+
+NOTE: Previously this script emitted a compressed NPZ (key 'embeddings').
+Compression added substantial runtime for large matrices with little size gain,
+so this now writes a raw .npy. If you pass a path ending in .npz it will be
+silently converted to .npy (with a warning message).
 
 Example:
   python -m wc_simd.vlm_embed_train_data \
-	  --input-glob "data/works_with_images_no_text_partitioned_embedded.parquet/*.parquet" \
-	  --output-npz data/vlm_embed/iiif_no_text_embedding_matrix.npz \
-	  --output-index data/vlm_embed/iiif_no_text_embedding_index.parquet
+      --input-glob "data/works_with_images_no_text_partitioned_embedded.parquet/*.parquet" \
+      --output-npy data/vlm_embed/iiif_no_text_embedding_matrix.npy \
+      --output-index data/vlm_embed/iiif_no_text_embedding_index.parquet
 
 The script takes a two-pass approach (first counts valid rows, second writes)
 
@@ -25,7 +30,6 @@ The script takes a two-pass approach (first counts valid rows, second writes)
 from __future__ import annotations
 
 import os
-import sys
 import glob
 import json
 import uuid
@@ -199,8 +203,8 @@ def build_matrix_two_pass(
 @click.command()
 @click.option("--input-glob", required=True,
               help="Glob for parquet shards with embeddings.")
-@click.option("--output-npz", required=True,
-              help="Path to write compressed npz file.")
+@click.option("--output-npy", "output_path", required=True,
+              help="Path to write uncompressed .npy file (if endswith .npz it will be changed to .npy).")
 @click.option("--output-index", required=True,
               help="Path to write index mapping (CSV or Parquet).")
 @click.option("--dimensions", default=1536, show_default=True,
@@ -212,18 +216,18 @@ def build_matrix_two_pass(
 @click.option("--memmap-dir", default="/tmp", show_default=True,
               help="Directory for memmap (always two-pass).")
 def cli(
-        input_glob: str,
-        output_npz: str,
-        output_index: str,
-        dimensions: int,
-        id_column: str,
-        no_dedupe: bool,
-        memmap_dir: str,
+    input_glob: str,
+    output_path: str,
+    output_index: str,
+    dimensions: int,
+    id_column: str,
+    no_dedupe: bool,
+    memmap_dir: str,
 ):
     """Aggregate embedding shards into a single matrix + index mapping.
 
     OUTPUTS:
-      - NPZ file with key 'embeddings'
+            - NPY file containing the full matrix
       - Index file (CSV or Parquet) with columns: row_index, <id_column>
     """
     parquet_files = sorted(glob.glob(input_glob))
@@ -240,9 +244,20 @@ def cli(
         parquet_files, dimensions, id_column, dedupe, stats, memmap_dir)
 
     click.echo(f"Final matrix shape: {matrix.shape}")
-    os.makedirs(os.path.dirname(output_npz) or '.', exist_ok=True)
-    np.savez_compressed(output_npz, embeddings=matrix)
-    click.echo(f"Wrote embeddings matrix: {output_npz}")
+    # Resolve output path & adjust extension if user supplied a legacy .npz
+    if output_path.lower().endswith(".npz"):
+        new_path = output_path[:-4] + ".npy"
+        click.echo(
+            f"[WARN] Requested output ends with .npz; switching to uncompressed .npy: {new_path}")
+        output_path = new_path
+    elif not output_path.lower().endswith('.npy'):
+        # Force .npy extension for clarity
+        output_path = output_path + '.npy'
+    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    # Write uncompressed .npy (fast, memory efficient given matrix already in
+    # memory)
+    np.save(output_path, matrix)
+    click.echo(f"Wrote embeddings matrix (uncompressed .npy): {output_path}")
 
     # Build index dataframe
     index_df = pd.DataFrame(
