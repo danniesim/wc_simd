@@ -160,14 +160,15 @@ class VAE3D(nn.Module):
         # element_mean | scale_by_dim | sum_per_sample | disabled
             recon_mse_manual_scale: Optional[float] = None,
             recon_log_extra: bool = True,
-            kl_uniform_weight: float = 0.0):
+            kl_uniform_weight: float = 0.0,
+            ae_mode: bool = False):
         super().__init__()
         self.latent_dim = latent_dim
         self.dropout = dropout
         # outputs [mu(D), logvar(D)]
         self.encoder = mlp(d_in, hidden, latent_dim * 2, dropout=dropout)
         # Decoder slightly *simpler* than symmetric to reduce collapse:
-        dec_hidden = hidden[::-1]
+        dec_hidden = hidden[::-2]
         if len(dec_hidden) > 1:
             dec_hidden = dec_hidden[:-1]  # drop the smallest
         self.decoder = mlp(latent_dim, dec_hidden, d_in, dropout=dropout)
@@ -179,6 +180,9 @@ class VAE3D(nn.Module):
         # Weight for variance penalty across per-dimension KL to avoid
         # single-dim collapse
         self.kl_uniform_weight = kl_uniform_weight
+        # If ae_mode=True we behave as a deterministic autoencoder (no KL, no
+        # sampling)
+        self.ae_mode = ae_mode
 
     def encode(self, x):
         h = self.encoder(x)
@@ -186,6 +190,9 @@ class VAE3D(nn.Module):
         return mu, logvar
 
     def reparameterize(self, mu, logvar):
+        if self.ae_mode:
+            # Deterministic pass-through (no noise)
+            return mu
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
@@ -243,48 +250,53 @@ class VAE3D(nn.Module):
         recon = (
             1 - self.recon_cosine_weight) * mse_used + self.recon_cosine_weight * cos_term
 
-        # KL per sample per dim (batch, latent_dim)
-        kl_elem = 0.5 * (mu.pow(2) + logvar.exp() - 1 - logvar)
-        kl_per_sample = kl_elem.sum(dim=-1)  # (batch,)
-        kl_raw = kl_per_sample.mean()        # scalar
-        kl_per_dim = kl_elem.mean(0)         # (latent_dim,)
-
-        active_dims = (
-            kl_per_dim > max(
-                1e-6,
-                free_bits if free_bits > 0 else 0.01)).sum()
-
-        if capacity_C is not None:  # capacity variant
-            # Use raw KL for distance to target capacity
-            # beta_capacity is analogous to γ; if None fallback to beta
-            gamma = beta_capacity if beta_capacity is not None else beta
-            kl_obj = torch.abs(kl_raw - capacity_C)
-            total = recon + gamma * kl_obj
-            kl_used = kl_raw  # for logging
+        if self.ae_mode:
+            # Pure autoencoder: no KL term, return zeros for diagnostics
+            kl_raw = torch.tensor(0.0, device=x.device)
+            kl_used = torch.tensor(0.0, device=x.device)
+            active_dims = torch.tensor(0, device=x.device)
+            capacity_C = None  # ensure logged as 0 below
+            kl_var = torch.tensor(0.0, device=x.device)
+            kl_uniform_penalty = torch.tensor(0.0, device=x.device)
+            total = recon  # reconstruction-only objective
         else:
-            # Free bits (per dim minimum)
-            if free_bits > 0.0:
-                kl_per_dim_fb = torch.clamp(kl_per_dim, min=free_bits)
-                kl_used = kl_per_dim_fb.sum()
-            else:
-                kl_used = kl_raw
-            total = recon + beta * kl_used
+            # KL per sample per dim (batch, latent_dim)
+            kl_elem = 0.5 * (mu.pow(2) + logvar.exp() - 1 - logvar)
+            kl_per_sample = kl_elem.sum(dim=-1)  # (batch,)
+            kl_raw = kl_per_sample.mean()        # scalar
+            kl_per_dim = kl_elem.mean(0)         # (latent_dim,)
 
-        kl_uniform_penalty = torch.tensor(0.0, device=x.device)
-        if self.kl_uniform_weight > 0 and self.latent_dim > 1:
-            # Encourage similar KL contributions across active dims.
-            # We use population variance; small epsilon to avoid penalizing pure zero-KL early.
-            # Only consider dims with KL>tiny to avoid division by near-zero
-            # regimes blowing up.
-            mask = kl_per_dim > 1e-6
-            if mask.sum() > 1:
-                kl_var = kl_per_dim[mask].var(unbiased=False)
-                kl_uniform_penalty = kl_var
-                total = total + self.kl_uniform_weight * kl_uniform_penalty
+            active_dims = (
+                kl_per_dim > max(
+                    1e-6,
+                    free_bits if free_bits > 0 else 0.01)).sum()
+
+            if capacity_C is not None:  # capacity variant
+                # Use raw KL for distance to target capacity
+                gamma = beta_capacity if beta_capacity is not None else beta
+                kl_obj = torch.abs(kl_raw - capacity_C)
+                total = recon + gamma * kl_obj
+                kl_used = kl_raw  # for logging
+            else:
+                # Free bits (per dim minimum)
+                if free_bits > 0.0:
+                    kl_per_dim_fb = torch.clamp(kl_per_dim, min=free_bits)
+                    kl_used = kl_per_dim_fb.sum()
+                else:
+                    kl_used = kl_raw
+                total = recon + beta * kl_used
+
+            kl_uniform_penalty = torch.tensor(0.0, device=x.device)
+            if self.kl_uniform_weight > 0 and self.latent_dim > 1:
+                mask = kl_per_dim > 1e-6
+                if mask.sum() > 1:
+                    kl_var = kl_per_dim[mask].var(unbiased=False)
+                    kl_uniform_penalty = kl_var
+                    total = total + self.kl_uniform_weight * kl_uniform_penalty
+                else:
+                    kl_var = torch.tensor(0.0, device=x.device)
             else:
                 kl_var = torch.tensor(0.0, device=x.device)
-        else:
-            kl_var = torch.tensor(0.0, device=x.device)
 
         parts = {
             "recon": recon.detach(),
@@ -336,6 +348,7 @@ def train(
     capacity_gamma: float,
     latent_dim: int,
     kl_uniform_weight: float,
+    ae_mode: bool,
 ):
     os.makedirs(out_dir, exist_ok=True)
     tb_dir = os.path.join(out_dir, "tb")
@@ -394,6 +407,7 @@ def train(
         "capacity_warmup_frac": capacity_warmup_frac,
         "capacity_gamma": capacity_gamma,
         "kl_uniform_weight": kl_uniform_weight,
+        "ae_mode": ae_mode,
         "log_every": log_every,
         "log_embed_every_epochs": log_embed_every_epochs,
         "embed_sample_size": embed_sample_size,
@@ -445,7 +459,8 @@ def train(
         dropout=dropout,
         recon_mse_mode=recon_mse_mode,
         recon_mse_manual_scale=recon_mse_manual_scale,
-        kl_uniform_weight=kl_uniform_weight).to(device)
+        kl_uniform_weight=kl_uniform_weight,
+        ae_mode=ae_mode).to(device)
     print(f"Model creation took: {time.time() - t_model:.2f}s")
     # Dropout integrated directly in encoder/decoder.
 
@@ -497,9 +512,12 @@ def train(
         for epoch in range(1, epochs + 1):
             model.train()
             # β warmup over epochs (linear)
-            frac = min(
-                1.0, epoch / max(1, math.ceil(epochs * beta_warmup_frac)))
-            model.beta = beta * frac
+            if not ae_mode:
+                frac = min(
+                    1.0, epoch / max(1, math.ceil(epochs * beta_warmup_frac)))
+                model.beta = beta * frac
+            else:
+                model.beta = 0.0  # not used, for logging consistency
 
             running = 0.0
             t0 = time.time()
@@ -525,7 +543,7 @@ def train(
                 with autocast_ctx:
                     x_hat, mu, logvar, z = model(xb)
                     # Capacity schedule (step based) if enabled
-                    if capacity_max > 0:
+                    if (not ae_mode) and capacity_max > 0:
                         capacity_steps = int(
                             capacity_warmup_frac * total_steps)
                         c_frac = 1.0 if capacity_steps <= 0 else min(
@@ -538,11 +556,11 @@ def train(
                             capacity_C=C_t,
                             beta_capacity=capacity_gamma,
                         )
-                    else:
+                    else:  # standard β-VAE loss or AE if ae_mode
                         loss, parts = model.loss(
                             xb, x_hat, mu, logvar,
                             beta=model.beta,
-                            free_bits=free_bits,
+                            free_bits=(0.0 if ae_mode else free_bits),
                             capacity_C=None,
                         )
                 scaler.scale(loss).backward()
@@ -617,7 +635,9 @@ def train(
                             global_step)
                         writer.add_scalar(
                             "capacity/gamma", capacity_gamma, global_step)
-                    writer.add_scalar("train/beta", model.beta, global_step)
+                    if not ae_mode:
+                        writer.add_scalar(
+                            "train/beta", model.beta, global_step)
                     writer.add_scalar(
                         "train/lr",
                         opt.param_groups[0]["lr"],
@@ -697,6 +717,7 @@ def train(
                     "capacity_warmup_frac": capacity_warmup_frac,
                     "capacity_gamma": capacity_gamma,
                     "kl_uniform_weight": kl_uniform_weight,
+                    "ae_mode": ae_mode,
                     "mean": ds.mean,
                     "std": ds.std,
                 }, ckpt_path)
@@ -748,6 +769,7 @@ class VAE3DWrapper:
         self.std = torch.from_numpy(ckpt["std"]).float()
         self.device = device or (
             "cuda" if torch.cuda.is_available() else "cpu")
+        ae_mode = ckpt.get("ae_mode", False)
         self.model = VAE3D(
             self.d_in,
             self.hidden,
@@ -758,7 +780,8 @@ class VAE3DWrapper:
             recon_mse_mode=recon_mse_mode,
             recon_mse_manual_scale=recon_mse_manual_scale,
             recon_log_extra=False,
-            kl_uniform_weight=ckpt.get("kl_uniform_weight", 0.0)).to(
+            kl_uniform_weight=ckpt.get("kl_uniform_weight", 0.0),
+            ae_mode=ae_mode).to(
             self.device)
         self.model.load_state_dict(ckpt["model"])
         self.model.eval()
@@ -845,13 +868,13 @@ def parse_args():
     pt.add_argument(
         "--latent_dim",
         type=int,
-        default=16,
+        default=3,
         help="Latent dimensionality (default 3). Embedding projector logs this latent space regardless of dimension.")
     # Regularisation (pick one strategy)
     pt.add_argument(
         "--free_bits",
         type=float,
-        default=0.5,
+        default=0.1,
         help="Per-dim minimum KL (nats). Set to 0.0 if using capacity objective. Typical 0.1–0.5.")
     pt.add_argument(
         "--capacity_max",
@@ -871,8 +894,12 @@ def parse_args():
     pt.add_argument(
         "--kl_uniform_weight",
         type=float,
-        default=0.1,
+        default=0.01,
         help="Variance penalty over per-dimension KL (var of KL dims) to encourage multi-dim latent usage; try 0.01–0.1. 0 disables.")
+    pt.add_argument(
+        "--ae",
+        action="store_true",
+        help="Enable plain autoencoder mode (no KL term, deterministic latent). Overrides beta, free_bits, capacity_* and kl_uniform_weight to effectively 0 during optimization.")
     # No performance options needed - always use lazy mode without
     # standardization
 
@@ -908,7 +935,8 @@ def main():
             capacity_max=args.capacity_max,
             capacity_warmup_frac=args.capacity_warmup_frac,
             capacity_gamma=args.capacity_gamma, latent_dim=args.latent_dim,
-            kl_uniform_weight=args.kl_uniform_weight)
+            kl_uniform_weight=(0.0 if args.ae else args.kl_uniform_weight),
+            ae_mode=args.ae)
     else:
         wrapper = VAE3DWrapper(args.ckpt)
         X = np.load(args.data).astype(np.float32)
@@ -925,7 +953,7 @@ def main():
 # 1) Train (light model)
 python src/wc_simd/vlm_embed_vae.py train \
   --data data/vlm_embed/iiif_no_text_embedding_matrix.npy \
-  --out runs/vlm_embed_vae3d_light_6 \
+  --out runs/vlm_embed_vae3d_light_8 \
   --hidden 1024 512 256 \
   --epochs 40 --beta 4.0 --beta_warmup_frac 0.2 --cos_w 0.6
 
