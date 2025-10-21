@@ -28,3 +28,6 @@ data/works_with_images_no_text_partitioned.parquet**
 data/works_with_images_no_text_partitioned_embedded.parquet**
 data/vlm_embed/iiif_no_text_embedding_*
 .env.name_rec
+runs/
+data/vlm_embed/
+*.sqlite
