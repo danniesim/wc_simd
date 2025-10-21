@@ -23,7 +23,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Sampler
 from torch.utils.tensorboard import SummaryWriter
 
 # -------------------------
@@ -129,6 +129,56 @@ class NpyEmbeds(Dataset):
         return out
 
 
+class ChunkShuffleSampler(Sampler[int]):
+    """Approximate global shuffle without allocating len(dataset) upfront.
+
+    Torch's default RandomSampler+shuffle=True materializes a full randperm
+    tensor every epoch which is prohibitively slow for tens of millions of
+    rows.  This sampler only shuffles within fixed-size chunks so we keep the
+    startup cost bounded while still decorrelating batches sufficiently for
+    SGD.  Chunk order varies every epoch via the shared RNG state.
+    """
+
+    def __init__(
+            self,
+            data_source: Dataset,
+            chunk_size: int,
+            seed: int = 0):
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be > 0")
+        self.data_source = data_source
+        self.chunk_size = int(chunk_size)
+        self.seed = int(seed)
+        self._epoch = 0
+
+    def __len__(self) -> int:
+        return len(self.data_source)
+
+    def set_epoch(self, epoch: int) -> None:
+        self._epoch = int(epoch)
+
+    def __iter__(self):
+        import torch
+
+        n = len(self.data_source)
+        if n == 0:
+            return iter(())
+
+        g = torch.Generator()
+        g.manual_seed(self.seed + self._epoch)
+        chunk_size = min(self.chunk_size, n)
+
+        def _iter():
+            for start in range(0, n, chunk_size):
+                end = min(start + chunk_size, n)
+                block_len = end - start
+                perm = torch.randperm(block_len, generator=g).tolist()
+                for offset in perm:
+                    yield start + offset
+
+        return _iter()
+
+
 # -------------------------
 # MLP helper
 # -------------------------
@@ -168,7 +218,7 @@ class VAE3D(nn.Module):
         # outputs [mu(D), logvar(D)]
         self.encoder = mlp(d_in, hidden, latent_dim * 2, dropout=dropout)
         # Decoder slightly *simpler* than symmetric to reduce collapse:
-        dec_hidden = hidden[::-2]
+        dec_hidden = hidden[::-1]
         if len(dec_hidden) > 1:
             dec_hidden = dec_hidden[:-1]  # drop the smallest
         self.decoder = mlp(latent_dim, dec_hidden, d_in, dropout=dropout)
@@ -349,6 +399,7 @@ def train(
     latent_dim: int,
     kl_uniform_weight: float,
     ae_mode: bool,
+    mmap: bool,
 ):
     os.makedirs(out_dir, exist_ok=True)
     tb_dir = os.path.join(out_dir, "tb")
@@ -411,6 +462,7 @@ def train(
         "log_every": log_every,
         "log_embed_every_epochs": log_embed_every_epochs,
         "embed_sample_size": embed_sample_size,
+        "mmap": mmap,
         "start_time": start_time,
         "status": "started",
         "pid": os.getpid()
@@ -422,9 +474,10 @@ def train(
 
     print("Creating dataset...")
     t_ds = time.time()
+    print(f"Memory map loading: {'enabled' if mmap else 'disabled'}")
     ds = NpyEmbeds(
         data_paths,
-        mmap=True,
+        mmap=mmap,
     )
     print(f"Dataset creation took: {time.time() - t_ds:.2f}s")
 
@@ -433,10 +486,16 @@ def train(
     print("Creating DataLoader...")
     t_dl = time.time()
 
+    shuffle_chunk = max(batch_size * 8, 8192)
+    sampler = ChunkShuffleSampler(
+        ds, chunk_size=shuffle_chunk, seed=seed)
+    print(
+        f"Using chunked shuffle sampler with chunk size {shuffle_chunk:,}")
+
     dl = DataLoader(
         ds,
         batch_size=batch_size,
-        shuffle=True,
+        sampler=sampler,
         drop_last=True,
         num_workers=num_workers,
         prefetch_factor=2,  # Reduced from 4
@@ -446,6 +505,7 @@ def train(
     print(f"DataLoader creation took: {time.time() - t_dl:.2f}s")
     print(
         f"Using {num_workers} workers for dataset of {len(ds):,} samples")
+    _write_config({"shuffle_chunk_size": shuffle_chunk}, merge=True)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
@@ -511,6 +571,8 @@ def train(
     try:
         for epoch in range(1, epochs + 1):
             model.train()
+            if hasattr(dl.sampler, "set_epoch"):
+                dl.sampler.set_epoch(epoch - 1)
             # β warmup over epochs (linear)
             if not ae_mode:
                 frac = min(
@@ -577,6 +639,8 @@ def train(
                     scheduler.step()
 
                 running += loss.item() * xb.size(0)
+                # Lightweight scalar logging; defer heavier histogram logging
+                # until after epoch 1
                 if (global_step % log_every) == 0:
                     writer.add_scalar("loss/total", loss.item(), global_step)
                     writer.add_scalar(
@@ -643,18 +707,20 @@ def train(
                         opt.param_groups[0]["lr"],
                         global_step)
 
-                    # Histograms (keep light)
-                    writer.add_histogram(
-                        "latent/mu", mu.detach().cpu(),
-                        global_step, bins="doane")
-                    writer.add_histogram(
-                        "latent/logvar",
-                        logvar.detach().cpu(),
-                        global_step,
-                        bins="doane")
-                    writer.add_histogram(
-                        "latent/z_sample", z.detach().cpu(),
-                        global_step, bins="doane")
+                    # Histograms: skip during epoch 1 to reduce startup
+                    # overhead
+                    if epoch > 1:
+                        writer.add_histogram(
+                            "latent/mu", mu.detach().cpu(),
+                            global_step, bins="doane")
+                        writer.add_histogram(
+                            "latent/logvar",
+                            logvar.detach().cpu(),
+                            global_step,
+                            bins="doane")
+                        writer.add_histogram(
+                            "latent/z_sample", z.detach().cpu(),
+                            global_step, bins="doane")
 
                 global_step += 1
 
@@ -677,10 +743,10 @@ def train(
                 }, merge=True)
 
             # Embedding projector (optional; logs a subsample of latent means)
-            # Log at epoch 1 and then every log_embed_every_epochs to provide
-            # an early preview.
+            # Projector logging only after first epoch (user request) and then
+            # every N epochs
             if (log_embed_every_epochs > 0) and (
-                    epoch == 1 or epoch % log_embed_every_epochs == 0):
+                    epoch > 1 and epoch % log_embed_every_epochs == 0):
                 with torch.no_grad():
                     idx = np.random.permutation(
                         len(ds))[: min(embed_sample_size, len(ds))]
@@ -860,11 +926,15 @@ def parse_args():
         help="Optional extra multiplier applied after mode scaling (e.g. 2.0).")
     pt.add_argument("--dropout", type=float, default=0.2)
     pt.add_argument("--weight_decay", type=float, default=2e-5)
-    pt.add_argument("--num_workers", type=int, default=8)
+    pt.add_argument("--num_workers", type=int, default=4)
     pt.add_argument("--seed", type=int, default=42)
     pt.add_argument("--log_every", type=int, default=50)
     pt.add_argument("--log_embed_every_epochs", type=int, default=3)
     pt.add_argument("--embed_sample_size", type=int, default=5000)
+    pt.add_argument(
+        "--no_mmap",
+        action="store_true",
+        help="Disable numpy memmap and load arrays eagerly. Useful if the dataset fits in RAM and random memmap access is slow on your storage.")
     pt.add_argument(
         "--latent_dim",
         type=int,
@@ -874,7 +944,7 @@ def parse_args():
     pt.add_argument(
         "--free_bits",
         type=float,
-        default=0.1,
+        default=0.3,
         help="Per-dim minimum KL (nats). Set to 0.0 if using capacity objective. Typical 0.1–0.5.")
     pt.add_argument(
         "--capacity_max",
@@ -936,7 +1006,8 @@ def main():
             capacity_warmup_frac=args.capacity_warmup_frac,
             capacity_gamma=args.capacity_gamma, latent_dim=args.latent_dim,
             kl_uniform_weight=(0.0 if args.ae else args.kl_uniform_weight),
-            ae_mode=args.ae)
+            ae_mode=args.ae,
+            mmap=(not args.no_mmap))
     else:
         wrapper = VAE3DWrapper(args.ckpt)
         X = np.load(args.data).astype(np.float32)
