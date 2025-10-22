@@ -7,11 +7,10 @@ This script scans a glob of parquet files that contain at least the columns:
 It will:
  1. Filter out null / malformed embeddings
  2. (Optionally) ensure all embeddings have the expected dimensionality
- 3. (Optionally) filter by image megapixel size inferred from the id (IIIF URL containing /full/W,H/)
- 4. Deduplicate by the id column (first occurrence kept by default)
- 5. Produce:
-     --output-npy : an *uncompressed* .npy file (shape [N, D])
-     --output-index : a CSV / Parquet mapping row_index -> id
+ 3. Deduplicate by the id column (first occurrence kept by default)
+ 4. Produce:
+        --output-npy : an *uncompressed* .npy file (shape [N, D])
+        --output-index : a CSV / Parquet mapping row_index -> id
 
 NOTE: Previously this script emitted a compressed NPZ (key 'embeddings').
 Compression added substantial runtime for large matrices with little size gain,
@@ -22,9 +21,7 @@ Example:
   python -m wc_simd.vlm_embed_train_data \
       --input-glob "data/works_with_images_no_text_partitioned_embedded.parquet/*.parquet" \
       --output-npy data/vlm_embed/iiif_no_text_embedding_matrix.npy \
-      --output-index data/vlm_embed/iiif_no_text_embedding_index.parquet \
-      --min-megapixels 1 \
-      --max-megapixels 999.0
+      --output-index data/vlm_embed/iiif_no_text_embedding_index.parquet
 
 The script takes a two-pass approach (first counts valid rows, second writes)
 
@@ -37,7 +34,6 @@ import glob
 import json
 import uuid
 from dataclasses import dataclass
-import re
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 import click
@@ -58,11 +54,6 @@ class Stats:
     bad_dim: int = 0
     duplicates: int = 0
     kept: int = 0
-    mp_too_small: int = 0  # filtered out for being below min megapixels
-    mp_too_large: int = 0  # filtered out for being above max megapixels
-    mp_unparseable: int = 0  # id did not contain parsable dimensions
-    # ids where dimensions could be parsed (irrespective of filtering)
-    mp_parsed: int = 0
 
 
 def normalise_embedding(e, dim: int) -> Optional[List[float]]:
@@ -82,35 +73,12 @@ def normalise_embedding(e, dim: int) -> Optional[List[float]]:
     return arr.tolist()
 
 
-_IIIF_DIMENSION_REGEX = re.compile(r"/full/(\d+),(\d+)/")
-
-
-def parse_iiif_megapixels(identifier: str) -> Optional[float]:
-    """Attempt to parse width,height from an IIIF-like identifier and return megapixels.
-
-    Expected pattern contains '/full/<width>,<height>/' segment.
-    Returns None if no match.
-    """
-    m = _IIIF_DIMENSION_REGEX.search(identifier)
-    if not m:
-        return None
-    try:
-        w = int(m.group(1))
-        h = int(m.group(2))
-    except ValueError:
-        return None
-    return (w * h) / 1_000_000.0
-
-
 def iter_valid_records(
         parquet_files: Sequence[str],
         id_col: str,
         dim: int,
         stats: Stats,
         dedupe: bool,
-        min_megapixels: Optional[float],
-        max_megapixels: Optional[float],
-        skip_unparseable_mp: bool,
 ) -> Iterable[Tuple[str, List[float]]]:
     """Yield (id, embedding_list) for valid embeddings.
 
@@ -131,20 +99,6 @@ def iter_valid_records(
         for rec in df.itertuples(index=False):
             _id = getattr(rec, id_col)
             emb = getattr(rec, "embedding")
-            # Megapixel filtering (before expensive normalisation)
-            mp = parse_iiif_megapixels(str(_id))
-            if mp is not None:
-                stats.mp_parsed += 1
-            if mp is None and skip_unparseable_mp:
-                stats.mp_unparseable += 1
-                continue
-            if mp is not None:
-                if min_megapixels is not None and mp < min_megapixels:
-                    stats.mp_too_small += 1
-                    continue
-                if max_megapixels is not None and mp > max_megapixels:
-                    stats.mp_too_large += 1
-                    continue
             norm = normalise_embedding(emb, dim)
             if norm is None:
                 if emb is None:
@@ -162,19 +116,12 @@ def iter_valid_records(
 
 
 def build_matrix_two_pass(
-    parquet_files: Sequence[str],
-    dim: int,
-    id_col: str,
-    dedupe: bool,
-    stats: Stats,
-    memmap_dir: str,
-    min_megapixels: Optional[float],
-    max_megapixels: Optional[float],
-    skip_unparseable_mp: bool,
+        parquet_files: Sequence[str], dim: int, id_col: str, dedupe: bool, stats: Stats, memmap_dir: str
 ) -> Tuple[np.ndarray, List[str]]:
-    # First pass: decide which IDs will be kept (collect only IDs to include)
-    click.echo("First pass (classifying & counting) ...")
-    accepted_ids: set = set()
+    # First pass: count valid vectors (with file-level progress)
+    click.echo("First pass (counting) ...")
+    count = 0
+    seen_first: set = set()
     for file in tqdm(parquet_files, desc="Pass 1/2 files", unit="file"):
         try:
             df = pd.read_parquet(file, columns=[id_col, "embedding"])
@@ -184,26 +131,11 @@ def build_matrix_two_pass(
         stats.total_rows += len(df)
         if "embedding" not in df.columns:
             continue
+        # Filter null embeddings quickly
         df = df[df["embedding"].notnull()]
         for rec in df.itertuples(index=False):
             _id = getattr(rec, id_col)
             emb = getattr(rec, "embedding")
-            mp = parse_iiif_megapixels(str(_id))
-            if mp is not None:
-                # We don't increment mp_parsed here to avoid double count;
-                # first pass handles it.
-                pass
-            # Megapixel exclusion logic
-            if mp is None and skip_unparseable_mp:
-                stats.mp_unparseable += 1
-                continue
-            if mp is not None:
-                if min_megapixels is not None and mp < min_megapixels:
-                    stats.mp_too_small += 1
-                    continue
-                if max_megapixels is not None and mp > max_megapixels:
-                    stats.mp_too_large += 1
-                    continue
             norm = normalise_embedding(emb, dim)
             if norm is None:
                 if emb is None:
@@ -211,12 +143,12 @@ def build_matrix_two_pass(
                 else:
                     stats.bad_dim += 1
                 continue
-            if dedupe and _id in accepted_ids:
-                # We count duplicates only in second pass for clarity
-                continue
-            accepted_ids.add(_id)
-    count = len(accepted_ids)
-    click.echo(f"Valid unique IDs accepted: {count}")
+            if dedupe:
+                if _id in seen_first:
+                    continue
+                seen_first.add(_id)
+            count += 1
+    click.echo(f"Valid vectors (after filtering & dedupe): {count}")
 
     # Second pass: write vectors (file progress + vector progress)
     os.makedirs(memmap_dir, exist_ok=True)
@@ -225,9 +157,7 @@ def build_matrix_two_pass(
     ids: List[str] = []
     stats.duplicates = 0  # recompute for second pass
     stats.kept = 0
-    # We reuse accepted_ids for membership; track which have been written to
-    # detect duplicate appearances across shards.
-    written_ids: set = set()
+    seen_second: set = set()
     filled = 0
     from_tqdm = tqdm(
         total=count,
@@ -244,17 +174,14 @@ def build_matrix_two_pass(
         for rec in df.itertuples(index=False):
             _id = getattr(rec, id_col)
             emb = getattr(rec, "embedding")
-            # Include only IDs classified as accepted in first pass
-            if _id not in accepted_ids:
-                continue
             norm = normalise_embedding(emb, dim)
             if norm is None:
                 continue
-            if dedupe and _id in written_ids:
+            if dedupe and _id in seen_second:
                 stats.duplicates += 1
                 continue
             if dedupe:
-                written_ids.add(_id)
+                seen_second.add(_id)
             mm[filled] = norm
             ids.append(str(_id))
             filled += 1
@@ -288,12 +215,6 @@ def build_matrix_two_pass(
               help="Do not deduplicate ids (keep all).")
 @click.option("--memmap-dir", default="/tmp", show_default=True,
               help="Directory for memmap (always two-pass).")
-@click.option("--min-megapixels", type=float, default=None, show_default=False,
-              help="Minimum image size in megapixels to include (parsed from id; e.g. W*H/1e6).")
-@click.option("--max-megapixels", type=float, default=None, show_default=False,
-              help="Maximum image size in megapixels to include.")
-@click.option("--skip-unparseable-size", is_flag=True, default=False,
-              help="Skip records whose id does not contain parsable IIIF /full/W,H/ segment.")
 def cli(
     input_glob: str,
     output_path: str,
@@ -302,9 +223,6 @@ def cli(
     id_column: str,
     no_dedupe: bool,
     memmap_dir: str,
-    min_megapixels: Optional[float],
-    max_megapixels: Optional[float],
-    skip_unparseable_size: bool,
 ):
     """Aggregate embedding shards into a single matrix + index mapping.
 
@@ -323,16 +241,7 @@ def cli(
 
     # Always use two-pass strategy for predictable memory usage
     matrix, ids = build_matrix_two_pass(
-        parquet_files,
-        dimensions,
-        id_column,
-        dedupe,
-        stats,
-        memmap_dir,
-        min_megapixels,
-        max_megapixels,
-        skip_unparseable_size,
-    )
+        parquet_files, dimensions, id_column, dedupe, stats, memmap_dir)
 
     click.echo(f"Final matrix shape: {matrix.shape}")
     # Resolve output path & adjust extension if user supplied a legacy .npz
@@ -367,30 +276,14 @@ def cli(
 
     # Print stats summary
     click.echo("--- Stats ---")
-    # Compute percentages safely
-
-    def pct(n: int, d: int) -> float:
-        return round((n / d * 100.0), 3) if d else 0.0
-    stats_json = {
+    click.echo(json.dumps({
         "total_rows": stats.total_rows,
         "null_embeddings": stats.null_embeddings,
         "bad_dim": stats.bad_dim,
         "duplicates_skipped": stats.duplicates,
         "kept": stats.kept,
         "dimensions": dimensions,
-        "mp_parsed": stats.mp_parsed,
-        "mp_unparseable": stats.mp_unparseable,
-        "mp_too_small": stats.mp_too_small,
-        "mp_too_large": stats.mp_too_large,
-        "mp_parsed_pct": pct(stats.mp_parsed, stats.total_rows),
-        "mp_unparseable_pct": pct(stats.mp_unparseable, stats.total_rows),
-        "mp_too_small_pct": pct(stats.mp_too_small, stats.total_rows),
-        "mp_too_large_pct": pct(stats.mp_too_large, stats.total_rows),
-        "min_megapixels": min_megapixels,
-        "max_megapixels": max_megapixels,
-        "skip_unparseable_size": skip_unparseable_size,
-    }
-    click.echo(json.dumps(stats_json, indent=2))
+    }, indent=2))
 
 
 if __name__ == "__main__":  # pragma: no cover
