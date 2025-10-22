@@ -1024,7 +1024,7 @@ def main():
 # 1) Train (light model)
 python src/wc_simd/vlm_embed_vae.py train \
   --data data/vlm_embed/iiif_no_text_embedding_matrix.npy \
-  --out runs/vlm_embed_vae3d_light_8 \
+  --out runs/vlm_embed_vae3d_hires_1 \
   --hidden 1024 512 256 \
   --epochs 40 --beta 4.0 --beta_warmup_frac 0.2 --cos_w 0.6
 
