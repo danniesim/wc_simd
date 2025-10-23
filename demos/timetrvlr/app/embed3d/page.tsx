@@ -522,6 +522,10 @@ export default function Embed3DPage() {
         let lastX = 0;
         let lastY = 0;
         let orientation = new Quaternion().copy(camera.quaternion);
+        // Smoothing accumulators
+        let yawAccum = 0; // radians to apply over time
+        let pitchAccum = 0; // radians to apply over time
+        let scrollAccum = 0; // world units to move along view-up over time
         const onMouseDown = (e: MouseEvent) => {
           if (e.button !== 0) return; // left button
           isDragging = true;
@@ -540,20 +544,9 @@ export default function Embed3DPage() {
           const sensitivity = 0.0025; // radians per pixel
           const yawDelta = -dx * sensitivity; // rotate around local up
           const pitchDelta = -dy * sensitivity; // rotate around local right
-          // Local axes (world-space) from current orientation
-          const upAxis = new Vector3(0, 1, 0)
-            .applyQuaternion(orientation)
-            .normalize();
-          const rightAxis = new Vector3(1, 0, 0)
-            .applyQuaternion(orientation)
-            .normalize();
-          const qYaw = new Quaternion().setFromAxisAngle(upAxis, yawDelta);
-          const qPitch = new Quaternion().setFromAxisAngle(
-            rightAxis,
-            pitchDelta
-          );
-          orientation = qYaw.multiply(qPitch).multiply(orientation);
-          if (camera) camera.quaternion.copy(orientation);
+          // Accumulate desired deltas; applied smoothly in animation loop
+          yawAccum += yawDelta;
+          pitchAccum += pitchDelta;
         };
         const onMouseUp = () => {
           isDragging = false;
@@ -586,18 +579,19 @@ export default function Embed3DPage() {
         }
         window.addEventListener("resize", onResize);
 
-        // Wheel to translate camera up/down relative to viewport, respecting speed
+        // Wheel to translate camera up/down relative to viewport, respecting speed (smoothed)
         const onWheel = (e: WheelEvent) => {
           if (!camera) return;
           const delta = Math.sign(e.deltaY);
           const upVec = new Vector3(0, 1, 0)
             .applyQuaternion(orientation)
             .normalize();
-          const baseStep = 0.2; // baseline units per wheel notch
+          const baseStep = 0.05; // baseline units per wheel notch (1/4 previous)
           const scale = speedScaleRef.current;
           const boost = e.shiftKey || pressed.has("shift") ? 3.0 : 1.0;
           const amount = -delta * baseStep * scale * boost;
-          camera.position.addScaledVector(upVec, amount);
+          // Accumulate and apply smoothly in the animation loop
+          scrollAccum += amount;
         };
         renderer.domElement.addEventListener("wheel", onWheel, {
           passive: true,
@@ -611,6 +605,43 @@ export default function Embed3DPage() {
           if (disposed) return;
           const dt = Math.max(0.001, Math.min(0.1, (t - lastTime) / 1000));
           lastTime = t;
+
+          // Smoothly apply accumulated mouse rotation deltas (exponential smoothing)
+          {
+            const rotK = 12.0; // responsiveness (higher = snappier)
+            const rotAlpha = 1 - Math.exp(-rotK * dt);
+            const applyYaw = yawAccum * rotAlpha;
+            const applyPitch = pitchAccum * rotAlpha;
+            yawAccum -= applyYaw;
+            pitchAccum -= applyPitch;
+            if (Math.abs(applyYaw) > 1e-6 || Math.abs(applyPitch) > 1e-6) {
+              const upAxis = new Vector3(0, 1, 0)
+                .applyQuaternion(orientation)
+                .normalize();
+              const rightAxis = new Vector3(1, 0, 0)
+                .applyQuaternion(orientation)
+                .normalize();
+              const qYaw = new Quaternion().setFromAxisAngle(upAxis, applyYaw);
+              const qPitch = new Quaternion().setFromAxisAngle(
+                rightAxis,
+                applyPitch
+              );
+              orientation = qYaw.multiply(qPitch).multiply(orientation);
+              if (camera) camera.quaternion.copy(orientation);
+            }
+          }
+
+          // Smoothly apply accumulated scroll up/down along view-up
+          if (Math.abs(scrollAccum) > 1e-6 && camera) {
+            const moveK = 10.0;
+            const moveAlpha = 1 - Math.exp(-moveK * dt);
+            const step = scrollAccum * moveAlpha;
+            scrollAccum -= step;
+            const upVec = new Vector3(0, 1, 0)
+              .applyQuaternion(orientation)
+              .normalize();
+            camera.position.addScaledVector(upVec, step);
+          }
 
           // WASD movement relative to camera orientation (quaternion-based)
           if (pressed.size > 0) {
