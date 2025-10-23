@@ -336,8 +336,10 @@ export default function Embed3DPage() {
         const planeGeom = new PlaneGeometry(1, 1);
         const baseMaterial = new MeshBasicMaterial({
           color: 0x66ccff,
+          // Flag as transparent to ensure planes render in the transparent pass
+          // after point sprites; keep visual opacity at 1.0.
           transparent: true,
-          opacity: 0.9,
+          opacity: 1.0,
           side: DoubleSide,
           depthWrite: false,
         });
@@ -371,7 +373,7 @@ export default function Embed3DPage() {
           size: spriteSizePx, // temporary, will scale by DPR below
           sizeAttenuation: false,
           transparent: true,
-          opacity: 0.9,
+          opacity: 0.5,
           depthWrite: false,
           // Keep point sprites visible even under heavy scene fog
           fog: false,
@@ -728,6 +730,8 @@ export default function Embed3DPage() {
                 const mesh = new Mesh(planeGeom, baseMaterial.clone());
                 mesh.position.copy(tmpWorld);
                 mesh.scale.set(planeSize, planeSize, 1);
+                // Ensure planes sort after sprites within the transparent pass
+                mesh.renderOrder = 1000;
                 planeGroup.add(mesh);
                 p.mesh = mesh;
               }
