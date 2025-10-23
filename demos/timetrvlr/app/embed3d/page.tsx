@@ -339,7 +339,7 @@ export default function Embed3DPage() {
         const planeSize = 0.008; // world units (height) — 10x smaller
         const planeGeom = new PlaneGeometry(1, 1);
         const baseMaterial = new MeshBasicMaterial({
-          color: 0x66ccff,
+          color: 0xffffff,
           // Flag as transparent to ensure planes render in the transparent pass
           // after point sprites; keep visual opacity at 1.0.
           transparent: true,
@@ -352,7 +352,7 @@ export default function Embed3DPage() {
         // LOD thresholds (screen space in device pixels)
         const textureLoadPx = 100; // load textures when projected height >= 100px
         const spriteSwitchPx = 100; // if projected height < 100px, render as point sprite
-        const spriteSizePx = 2.5; // sprite CSS pixel size (will scale by DPR)
+        const spriteSizePx = 10.0; // 4x larger base CSS pixel size
         // Aggregated point sprites for far/very small points
         const pointsGeom = new BufferGeometry();
         const spritePositions = new Float32Array(n * 3);
@@ -373,9 +373,9 @@ export default function Embed3DPage() {
           1.75
         );
         const pointsMat = new PointsMaterial({
-          color: 0x66ccff,
-          size: spriteSizePx, // temporary, will scale by DPR below
-          sizeAttenuation: false,
+          color: 0xffffff,
+          size: spriteSizePx, // recalculated per-frame for perspective scaling
+          sizeAttenuation: true,
           transparent: true,
           opacity: 0.5,
           depthWrite: false,
@@ -390,15 +390,7 @@ export default function Embed3DPage() {
         scene.add(pointsObj);
 
         // (debug unit-cube points removed)
-        // Scale sprite size by renderer DPR so visual size matches CSS px
-        try {
-          const pr =
-            (
-              renderer as THREE.WebGLRenderer & { getPixelRatio?(): number }
-            ).getPixelRatio?.() ??
-            (window.devicePixelRatio || 1);
-          pointsMat.size = spriteSizePx * pr;
-        } catch {}
+        // Points size is set per-frame based on perspective; no DPR scaling here
 
         type PlaneItem = {
           mesh: THREE.Mesh | null;
@@ -503,7 +495,7 @@ export default function Embed3DPage() {
             (
               mat as THREE.MeshBasicMaterial & { map?: THREE.Texture | null }
             ).map = null;
-            mat.color.set(0x66ccff);
+            mat.color.set(0xffffff);
             mat.needsUpdate = true;
           }
           // Reset to square placeholder if mesh persists
@@ -581,15 +573,7 @@ export default function Embed3DPage() {
           renderer.setSize(w, h);
           camera.aspect = w / h;
           camera.updateProjectionMatrix();
-          // Keep sprite size consistent with CSS pixels across DPR changes
-          try {
-            const pr =
-              (
-                renderer as THREE.WebGLRenderer & { getPixelRatio?(): number }
-              ).getPixelRatio?.() ??
-              (window.devicePixelRatio || 1);
-            pointsMat.size = spriteSizePx * pr;
-          } catch {}
+          // Sprite size will be recalculated in the animation loop from FOV/height
         }
         window.addEventListener("resize", onResize);
 
@@ -671,6 +655,11 @@ export default function Embed3DPage() {
                   (camera as THREE.PerspectiveCamera).fov * 0.5
                 )
               );
+            // Make point sprites scale with distance and perspective so that at
+            // distance 1 their on-screen size ≈ spriteSizePx CSS pixels.
+            try {
+              pointsMat.size = spriteSizePx / Math.max(f, 1e-6);
+            } catch {}
             let spriteCount = 0;
             for (let i = 0; i < planes.length; i++) {
               const p = planes[i];
