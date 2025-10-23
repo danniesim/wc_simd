@@ -323,7 +323,7 @@ export default function Embed3DPage() {
         scene.fog = new Fog(0x000000, Math.max(0, zClip * 0.6), zClip);
 
         const cameraDistance = 2.0; // start backed away so the cloud is in view
-        const nearPlane = Math.max(1e-6, Math.min(0.01, zClip * 0.1));
+        const nearPlane = Math.max(1e-6, Math.min(0.005, zClip * 0.05));
         camera = new PerspectiveCamera(60, width / height, nearPlane, zClip);
         camera.position.set(0, 0, cameraDistance);
         camera.updateProjectionMatrix();
@@ -527,6 +527,9 @@ export default function Embed3DPage() {
           isDragging = true;
           lastX = e.clientX;
           lastY = e.clientY;
+          try {
+            renderer?.domElement && (renderer.domElement.style.cursor = "none");
+          } catch {}
         };
         const onMouseMove = (e: MouseEvent) => {
           if (!isDragging) return;
@@ -554,9 +557,15 @@ export default function Embed3DPage() {
         };
         const onMouseUp = () => {
           isDragging = false;
+          try {
+            renderer?.domElement && (renderer.domElement.style.cursor = "");
+          } catch {}
         };
         const onMouseLeave = () => {
           isDragging = false;
+          try {
+            renderer?.domElement && (renderer.domElement.style.cursor = "");
+          } catch {}
         };
         renderer.domElement.addEventListener("mousedown", onMouseDown);
         window.addEventListener("mousemove", onMouseMove);
@@ -789,6 +798,9 @@ export default function Embed3DPage() {
             }
           });
           renderer?.dispose?.();
+          try {
+            if (renderer?.domElement) renderer.domElement.style.cursor = "";
+          } catch {}
           if (renderer?.domElement?.parentNode) {
             renderer.domElement.parentNode.removeChild(renderer.domElement);
           }
@@ -817,7 +829,7 @@ export default function Embed3DPage() {
     const cam = cameraRef.current;
     const scn = sceneRef.current;
     if (cam) {
-      cam.near = Math.max(1e-6, Math.min(0.01, zClip * 0.1));
+      cam.near = Math.max(1e-6, Math.min(0.005, zClip * 0.05));
       cam.far = zClip;
       cam.updateProjectionMatrix();
     }
