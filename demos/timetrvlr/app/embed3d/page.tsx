@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
 
 // Minimal .npy loader supporting v1.x/v2.x float arrays, C-order
 function parseNpy(buffer: ArrayBuffer): {
@@ -129,14 +130,14 @@ export default function Embed3DPage() {
   const [error, setError] = useState<string | null>(null);
   const [zClip, setZClip] = useState<number>(3);
   const [logZ, setLogZ] = useState<number>(Math.log10(3));
-  const cameraRef = useRef<any>(null);
-  const sceneRef = useRef<any>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const zClipRef = useRef<number>(3);
 
   useEffect(() => {
-    let renderer: any;
-    let camera: any;
-    let scene: any;
+    let renderer: THREE.WebGLRenderer | null = null;
+    let camera: THREE.PerspectiveCamera | null = null;
+    let scene: THREE.Scene | null = null;
     let animationId: number | null = null;
     let disposed = false;
 
@@ -175,7 +176,6 @@ export default function Embed3DPage() {
         }
 
         // Debug: log number of points
-        // eslint-disable-next-line no-console
         console.log("[embed3d] points:", n);
 
         // Center and scale to unit cube
@@ -223,7 +223,7 @@ export default function Embed3DPage() {
           Fog,
           Vector3,
           Quaternion,
-          sRGBEncoding,
+          SRGBColorSpace,
         } = await import("three");
 
         if (!containerRef.current) return;
@@ -234,9 +234,9 @@ export default function Embed3DPage() {
         renderer = new WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(width, height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-        // @ts-ignore older three types
-        if (renderer.outputEncoding !== undefined)
-          renderer.outputEncoding = sRGBEncoding;
+        if ("outputColorSpace" in renderer) {
+          renderer.outputColorSpace = SRGBColorSpace;
+        }
         containerRef.current.appendChild(renderer.domElement);
 
         scene = new Scene();
@@ -320,7 +320,7 @@ export default function Embed3DPage() {
             pitchDelta
           );
           orientation = qYaw.multiply(qPitch).multiply(orientation);
-          camera.quaternion.copy(orientation);
+          if (camera) camera.quaternion.copy(orientation);
         };
         const onMouseUp = () => {
           isDragging = false;
@@ -337,7 +337,7 @@ export default function Embed3DPage() {
         // const axes = new AxesHelper(1); scene.add(axes);
 
         function onResize() {
-          if (!containerRef.current) return;
+          if (!containerRef.current || !renderer || !camera) return;
           const w = containerRef.current.clientWidth;
           const h = containerRef.current.clientHeight;
           renderer.setSize(w, h);
@@ -348,6 +348,7 @@ export default function Embed3DPage() {
 
         // Wheel to dolly forward/backward
         const onWheel = (e: WheelEvent) => {
+          if (!camera) return;
           const delta = Math.sign(e.deltaY);
           const forward = new Vector3(0, 0, -1)
             .applyQuaternion(orientation)
@@ -356,7 +357,7 @@ export default function Embed3DPage() {
         };
         renderer.domElement.addEventListener("wheel", onWheel, {
           passive: true,
-        } as any);
+        } as AddEventListenerOptions);
 
         let lastTime = performance.now();
         const animate = (t: number) => {
@@ -388,7 +389,7 @@ export default function Embed3DPage() {
                 sign * rollSpeed * dt
               );
               orientation = qRoll.multiply(orientation);
-              camera.quaternion.copy(orientation);
+              if (camera) camera.quaternion.copy(orientation);
             }
 
             if (move.lengthSq() > 0) {
@@ -397,16 +398,18 @@ export default function Embed3DPage() {
               const scale = zClipRef.current;
               const speed = (pressed.has("shift") ? 3.0 : 1.0) * base * scale;
               move.multiplyScalar(speed * dt);
-              camera.position.add(move);
+              if (camera) camera.position.add(move);
               // camera.quaternion already reflects orientation
             }
           }
-          renderer.render(scene, camera);
+          if (renderer && scene && camera) {
+            renderer.render(scene, camera);
+          }
           animationId = requestAnimationFrame(animate);
         };
         animationId = requestAnimationFrame(animate);
 
-        setStatus(null);
+        setStatus("");
 
         return () => {
           disposed = true;
@@ -414,24 +417,23 @@ export default function Embed3DPage() {
           window.removeEventListener("resize", onResize);
           window.removeEventListener("keydown", onKeyDown);
           window.removeEventListener("keyup", onKeyUp);
-          renderer?.domElement?.removeEventListener("wheel", onWheel as any);
-          renderer?.domElement?.removeEventListener(
-            "mousedown",
-            onMouseDown as any
-          );
-          window.removeEventListener("mousemove", onMouseMove as any);
-          window.removeEventListener("mouseup", onMouseUp as any);
-          renderer?.domElement?.removeEventListener(
-            "mouseleave",
-            onMouseLeave as any
-          );
+          renderer?.domElement?.removeEventListener("wheel", onWheel);
+          renderer?.domElement?.removeEventListener("mousedown", onMouseDown);
+          window.removeEventListener("mousemove", onMouseMove);
+          window.removeEventListener("mouseup", onMouseUp);
+          renderer?.domElement?.removeEventListener("mouseleave", onMouseLeave);
           // Clean up three objects
-          scene?.traverse((obj: any) => {
-            if ((obj as any).geometry) (obj as any).geometry.dispose?.();
-            if ((obj as any).material) {
-              const m = (obj as any).material;
-              if (Array.isArray(m)) m.forEach((mm) => mm.dispose?.());
-              else m.dispose?.();
+          scene?.traverse((obj: THREE.Object3D) => {
+            if ("geometry" in obj && obj.geometry) {
+              (obj.geometry as THREE.BufferGeometry).dispose?.();
+            }
+            if ("material" in obj && obj.material) {
+              const m = obj.material as THREE.Material | THREE.Material[];
+              if (Array.isArray(m)) {
+                m.forEach((mm) => mm.dispose?.());
+              } else {
+                m.dispose?.();
+              }
             }
           });
           renderer?.dispose?.();
@@ -439,10 +441,10 @@ export default function Embed3DPage() {
             renderer.domElement.parentNode.removeChild(renderer.domElement);
           }
         };
-      } catch (e: any) {
+      } catch (e: unknown) {
         console.error(e);
-        setError(e?.message || String(e));
-        setStatus(null);
+        setError(e instanceof Error ? e.message : String(e));
+        setStatus("");
       }
     }
 
@@ -454,21 +456,22 @@ export default function Embed3DPage() {
         if (typeof c === "function") c();
       })();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // React to zClip changes: adjust camera near/far planes and fog
   useEffect(() => {
     zClipRef.current = zClip;
-    const cam = cameraRef.current as any;
-    const scn = sceneRef.current as any;
+    const cam = cameraRef.current;
+    const scn = sceneRef.current;
     if (cam) {
       cam.near = Math.max(1e-6, Math.min(0.01, zClip * 0.1));
       cam.far = zClip;
-      cam.updateProjectionMatrix?.();
+      cam.updateProjectionMatrix();
     }
     if (scn && scn.fog) {
-      // Update existing fog parameters without using require()
-      const fog = scn.fog as any;
+      // Update existing fog parameters
+      const fog = scn.fog as THREE.Fog;
       if (fog.color?.set) fog.color.set(0x000000);
       fog.near = Math.max(0, zClip * 0.6);
       fog.far = zClip;
