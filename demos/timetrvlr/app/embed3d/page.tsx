@@ -670,6 +670,8 @@ export default function Embed3DPage() {
               pointsMat.size = spriteSizePx / Math.max(f, 1e-6);
             } catch {}
             let spriteCount = 0;
+            const toLoad: Array<{ idx: number; pi: PlaneItem; score: number }>
+              = [];
             for (let i = 0; i < planes.length; i++) {
               const p = planes[i];
               // World position of point i
@@ -745,7 +747,10 @@ export default function Embed3DPage() {
               if (p.mesh) p.mesh.quaternion.copy(orientation);
               const bigEnough = screenHeightPx >= textureLoadPx;
               if (bigEnough) {
-                maybeLoadTexture(p, i);
+                // Queue for prioritized loading by on-screen size (nearer first)
+                if (p.status === "empty") {
+                  toLoad.push({ idx: i, pi: p, score: screenHeightPx });
+                }
               } else {
                 // If currently textured, unload to save memory
                 try {
@@ -761,6 +766,14 @@ export default function Embed3DPage() {
             ) as THREE.BufferAttribute;
             posAttr.needsUpdate = true;
             pointsGeom.setDrawRange(0, spriteCount);
+
+            // Start texture loads for nearer planes first
+            if (toLoad.length > 0) {
+              toLoad.sort((a, b) => b.score - a.score);
+              for (const item of toLoad) {
+                maybeLoadTexture(item.pi, item.idx);
+              }
+            }
           }
 
           if (renderer && scene && camera) {
