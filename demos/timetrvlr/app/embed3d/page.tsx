@@ -375,8 +375,8 @@ export default function Embed3DPage() {
           transparent: true,
           opacity: 0.5,
           depthWrite: false,
-          // Keep point sprites visible even under heavy scene fog
-          fog: false,
+          // Make sprites obey scene fog for consistent depth cueing
+          fog: true,
         });
         const pointsObj = new Points(pointsGeom, pointsMat);
         // Use frustum culling with the static boundingSphere defined above.
