@@ -601,6 +601,7 @@ export default function Embed3DPage() {
         // temp vectors to avoid allocations in the loop
         const tmpWorld = new Vector3();
         const tmpNdc = new Vector3();
+        let moveVel = new Vector3();
         const animate = (t: number) => {
           if (disposed) return;
           const dt = Math.max(0.001, Math.min(0.1, (t - lastTime) / 1000));
@@ -643,42 +644,43 @@ export default function Embed3DPage() {
             camera.position.addScaledVector(upVec, step);
           }
 
-          // WASD movement relative to camera orientation (quaternion-based)
-          if (pressed.size > 0) {
-            const forward = new Vector3(0, 0, -1)
-              .applyQuaternion(orientation)
-              .normalize();
-            const right = new Vector3(1, 0, 0)
-              .applyQuaternion(orientation)
-              .normalize();
+          // WASD movement relative to camera orientation, eased in/out
+          const forward = new Vector3(0, 0, -1)
+            .applyQuaternion(orientation)
+            .normalize();
+          const right = new Vector3(1, 0, 0)
+            .applyQuaternion(orientation)
+            .normalize();
 
-            const move = new Vector3();
-            if (pressed.has("w")) move.add(forward);
-            if (pressed.has("s")) move.addScaledVector(forward, -1);
-            if (pressed.has("a")) move.addScaledVector(right, -1);
-            if (pressed.has("d")) move.add(right);
-
-            // Q/E roll around forward axis (apply to orientation quaternion)
-            const rollSpeed = 1.2; // radians per second
-            if (pressed.has("q") || pressed.has("e")) {
-              const sign = pressed.has("q") ? -1 : 1;
-              const qRoll = new Quaternion().setFromAxisAngle(
-                forward,
-                sign * rollSpeed * dt
-              );
-              orientation = qRoll.multiply(orientation);
-              if (camera) camera.quaternion.copy(orientation);
-            }
-
-          if (move.lengthSq() > 0) {
-            move.normalize();
-            const base = 0.8; // base units/sec at scale=1
-            const scale = speedScaleRef.current; // decoupled from zClip
-            const speed = (pressed.has("shift") ? 3.0 : 1.0) * base * scale;
-            move.multiplyScalar(speed * dt);
-            if (camera) camera.position.add(move);
-            // camera.quaternion already reflects orientation
+          // Q/E roll around forward axis (apply to orientation quaternion)
+          const rollSpeed = 1.2; // radians per second
+          if (pressed.has("q") || pressed.has("e")) {
+            const sign = pressed.has("q") ? -1 : 1;
+            const qRoll = new Quaternion().setFromAxisAngle(
+              forward,
+              sign * rollSpeed * dt
+            );
+            orientation = qRoll.multiply(orientation);
+            if (camera) camera.quaternion.copy(orientation);
           }
+
+          // Desired velocity from input
+          const input = new Vector3();
+          if (pressed.has("w")) input.add(forward);
+          if (pressed.has("s")) input.addScaledVector(forward, -1);
+          if (pressed.has("a")) input.addScaledVector(right, -1);
+          if (pressed.has("d")) input.add(right);
+          if (input.lengthSq() > 0) input.normalize();
+          const base = 0.8; // base units/sec at scale=1
+          const scale = speedScaleRef.current;
+          const speed = (pressed.has("shift") ? 3.0 : 1.0) * base * scale;
+          const desiredVel = input.multiplyScalar(speed);
+          // Exponential smoothing towards desired velocity
+          const velK = 8.0; // responsiveness
+          const velAlpha = 1 - Math.exp(-velK * dt);
+          moveVel.lerp(desiredVel, velAlpha);
+          if (camera && moveVel.lengthSq() > 1e-10) {
+            camera.position.addScaledVector(moveVel, dt);
           }
           // Billboard planes face camera, preclip by frustum, and decide which to texture
           if (camera && renderer) {
