@@ -128,12 +128,13 @@ export default function Embed3DPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string>("Loading...");
   const [error, setError] = useState<string | null>(null);
-  const [zClip, setZClip] = useState<number>(6e-2);
-  const [logZ, setLogZ] = useState<number>(Math.log10(6e-2));
+  // Start with a generous far clip so the normalized unit-cube cloud is visible
+  const [zClip, setZClip] = useState<number>(3.0);
+  const [logZ, setLogZ] = useState<number>(Math.log10(3.0));
   const imageIdsRef = useRef<string[] | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
-  const zClipRef = useRef<number>(6e-2);
+  const zClipRef = useRef<number>(3.0);
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer | null = null;
@@ -230,7 +231,13 @@ export default function Embed3DPage() {
         mean[0] /= n;
         mean[1] /= n;
         mean[2] /= n;
-        let maxAbs = 1e-6;
+        let maxAbs = 1e-12;
+        let minX = Infinity,
+          minY = Infinity,
+          minZ = Infinity,
+          maxX = -Infinity,
+          maxY = -Infinity,
+          maxZ = -Infinity;
         for (let i = 0; i < n; i++) {
           coords[i * 3 + 0] -= mean[0];
           coords[i * 3 + 1] -= mean[1];
@@ -240,6 +247,24 @@ export default function Embed3DPage() {
             Math.abs(coords[i * 3 + 0]),
             Math.abs(coords[i * 3 + 1]),
             Math.abs(coords[i * 3 + 2])
+          );
+          // Track bounds for diagnostics
+          const x = coords[i * 3 + 0];
+          const y = coords[i * 3 + 1];
+          const z = coords[i * 3 + 2];
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (z < minZ) minZ = z;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+          if (z > maxZ) maxZ = z;
+        }
+        if (!Number.isFinite(maxAbs) || maxAbs < 1e-9) {
+          throw new Error(
+            `Embedding appears degenerate (zero variance). Bounds after centering: ` +
+              `x=[${minX.toExponential(2)}, ${maxX.toExponential(2)}], ` +
+              `y=[${minY.toExponential(2)}, ${maxY.toExponential(2)}], ` +
+              `z=[${minZ.toExponential(2)}, ${maxZ.toExponential(2)}]`
           );
         }
         const s = 1.0 / maxAbs;
@@ -267,7 +292,7 @@ export default function Embed3DPage() {
           PointsMaterial,
           Points,
           BufferGeometry,
-          Float32BufferAttribute,
+          BufferAttribute,
           DynamicDrawUsage,
           DoubleSide,
           Group,
@@ -293,7 +318,7 @@ export default function Embed3DPage() {
         // Linear fog that corresponds with far clip distance
         scene.fog = new Fog(0x000000, Math.max(0, zClip * 0.6), zClip);
 
-        const cameraDistance = 0; // start at center of the field
+        const cameraDistance = 2.0; // start backed away so the cloud is in view
         const nearPlane = Math.max(1e-6, Math.min(0.01, zClip * 0.1));
         camera = new PerspectiveCamera(60, width / height, nearPlane, zClip);
         camera.position.set(0, 0, cameraDistance);
@@ -325,13 +350,21 @@ export default function Embed3DPage() {
         // Aggregated point sprites for far/very small points
         const pointsGeom = new BufferGeometry();
         const spritePositions = new Float32Array(n * 3);
-        pointsGeom.setAttribute(
-          "position",
-          new Float32BufferAttribute(spritePositions, 3)
-        );
+        // (no per-vertex colors in production)
+        // IMPORTANT: use BufferAttribute to retain a live view into
+        // spritePositions so per-frame writes are visible to the GPU.
+        pointsGeom.setAttribute("position", new BufferAttribute(spritePositions, 3));
+        // (vertex colors removed)
         pointsGeom.setDrawRange(0, 0);
         (pointsGeom.attributes.position as THREE.BufferAttribute).setUsage?.(
           DynamicDrawUsage
+        );
+        // Provide a stable, generous bounding sphere for correct object-level
+        // frustum culling. Coords are centered and scaled to a unit cube, so
+        // a radius slightly larger than sqrt(3) is safe.
+        pointsGeom.boundingSphere = new THREE.Sphere(
+          new THREE.Vector3(0, 0, 0),
+          1.75
         );
         const pointsMat = new PointsMaterial({
           color: 0x66ccff,
@@ -340,9 +373,17 @@ export default function Embed3DPage() {
           transparent: true,
           opacity: 0.9,
           depthWrite: false,
+          // Keep point sprites visible even under heavy scene fog
+          fog: false,
         });
         const pointsObj = new Points(pointsGeom, pointsMat);
+        // Use frustum culling with the static boundingSphere defined above.
+        pointsObj.frustumCulled = true;
+        // Restore normal depth testing and render order for sprites
+        pointsMat.depthTest = true;
         scene.add(pointsObj);
+
+        // (debug unit-cube points removed)
         // Scale sprite size by renderer DPR so visual size matches CSS px
         try {
           const pr =
@@ -607,6 +648,11 @@ export default function Embed3DPage() {
           }
           // Billboard planes face camera, preclip by frustum, and decide which to texture
           if (camera && renderer) {
+            // Ensure camera matrices used for projection (NDC test) are in sync
+            // with what the renderer will use this frame.
+            try {
+              camera.updateMatrixWorld(true);
+            } catch {}
             const h = renderer.domElement.height;
             const f =
               (0.5 * h) /
@@ -624,7 +670,7 @@ export default function Embed3DPage() {
                 coords[i * 3 + 1],
                 coords[i * 3 + 2]
               );
-              // Preclip: skip offscreen or beyond near/far by projecting to NDC
+              // Preclip: skip offscreen by projecting to NDC
               tmpNdc.copy(tmpWorld).project(camera);
               const inFrustum =
                 tmpNdc.x >= -1 &&
@@ -634,14 +680,12 @@ export default function Embed3DPage() {
                 tmpNdc.z >= -1 &&
                 tmpNdc.z <= 1;
               if (!inFrustum) {
-                // Offscreen: unload texture and remove mesh if exists
                 if (p.mesh) {
                   try {
                     maybeUnloadTexture(p);
                   } catch (e) {
                     console.error(e);
                   }
-                  // remove from scene and dispose material
                   try {
                     planeGroup.remove(p.mesh);
                   } catch {}
@@ -701,12 +745,12 @@ export default function Embed3DPage() {
                 }
               }
             }
-            // Update sprite geometry draw range and flag update
-            pointsGeom.setDrawRange(0, spriteCount);
+            // Update sprite geometry and flag GPU upload (simple, portable path)
             const posAttr = pointsGeom.getAttribute(
               "position"
             ) as THREE.BufferAttribute;
             posAttr.needsUpdate = true;
+            pointsGeom.setDrawRange(0, spriteCount);
           }
 
           if (renderer && scene && camera) {
@@ -794,6 +838,7 @@ export default function Embed3DPage() {
           Drag: look around • Scroll: dolly • WASD: move • Q/E: roll • Shift:
           boost
         </div>
+        {/* HUD removed in production */}
         <div className="mt-2 flex items-center gap-2">
           <label htmlFor="zclip" className="opacity-80">
             Far clip (log)
