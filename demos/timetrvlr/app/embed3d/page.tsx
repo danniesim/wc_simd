@@ -131,10 +131,14 @@ export default function Embed3DPage() {
   // Start with a generous far clip so the normalized unit-cube cloud is visible
   const [zClip, setZClip] = useState<number>(3.0);
   const [logZ, setLogZ] = useState<number>(Math.log10(3.0));
+  // Separate movement speed scale (log slider, same range as far clip)
+  const [speedScale, setSpeedScale] = useState<number>(3.0);
+  const [logSpeed, setLogSpeed] = useState<number>(Math.log10(3.0));
   const imageIdsRef = useRef<string[] | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const zClipRef = useRef<number>(3.0);
+  const speedScaleRef = useRef<number>(3.0);
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer | null = null;
@@ -589,14 +593,18 @@ export default function Embed3DPage() {
         }
         window.addEventListener("resize", onResize);
 
-        // Wheel to dolly forward/backward
+        // Wheel to translate camera up/down relative to viewport, respecting speed
         const onWheel = (e: WheelEvent) => {
           if (!camera) return;
           const delta = Math.sign(e.deltaY);
-          const forward = new Vector3(0, 0, -1)
+          const upVec = new Vector3(0, 1, 0)
             .applyQuaternion(orientation)
             .normalize();
-          camera.position.addScaledVector(forward, -delta * 0.2);
+          const baseStep = 0.2; // baseline units per wheel notch
+          const scale = speedScaleRef.current;
+          const boost = e.shiftKey || pressed.has("shift") ? 3.0 : 1.0;
+          const amount = -delta * baseStep * scale * boost;
+          camera.position.addScaledVector(upVec, amount);
         };
         renderer.domElement.addEventListener("wheel", onWheel, {
           passive: true,
@@ -638,15 +646,15 @@ export default function Embed3DPage() {
               if (camera) camera.quaternion.copy(orientation);
             }
 
-            if (move.lengthSq() > 0) {
-              move.normalize();
-              const base = 0.8; // base units/sec at zClip=1
-              const scale = zClipRef.current;
-              const speed = (pressed.has("shift") ? 3.0 : 1.0) * base * scale;
-              move.multiplyScalar(speed * dt);
-              if (camera) camera.position.add(move);
-              // camera.quaternion already reflects orientation
-            }
+          if (move.lengthSq() > 0) {
+            move.normalize();
+            const base = 0.8; // base units/sec at scale=1
+            const scale = speedScaleRef.current; // decoupled from zClip
+            const speed = (pressed.has("shift") ? 3.0 : 1.0) * base * scale;
+            move.multiplyScalar(speed * dt);
+            if (camera) camera.position.add(move);
+            // camera.quaternion already reflects orientation
+          }
           }
           // Billboard planes face camera, preclip by frustum, and decide which to texture
           if (camera && renderer) {
@@ -833,13 +841,18 @@ export default function Embed3DPage() {
     }
   }, [zClip]);
 
+  // Reflect speed scale changes inside the animation loop via ref
+  useEffect(() => {
+    speedScaleRef.current = speedScale;
+  }, [speedScale]);
+
   return (
     <div className="fixed inset-0 bg-black">
       <div ref={containerRef} className="absolute inset-0" />
       <div className="absolute left-4 top-4 z-10 rounded bg-black/60 px-3 py-2 text-xs text-white">
         <div className="font-semibold">3D Embedding Viewer</div>
         <div className="opacity-80">
-          Drag: look around • Scroll: dolly • WASD: move • Q/E: roll • Shift:
+          Drag: look around • Scroll: move up/down • WASD: move • Q/E: roll • Shift:
           boost
         </div>
         {/* HUD removed in production */}
@@ -862,6 +875,27 @@ export default function Embed3DPage() {
           />
           <span className="tabular-nums w-16 text-right">
             {zClip.toExponential(2)}
+          </span>
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <label htmlFor="speed" className="opacity-80">
+            Speed (log)
+          </label>
+          <input
+            id="speed"
+            type="range"
+            min={-3}
+            max={1}
+            step={0.01}
+            value={logSpeed}
+            onChange={(e) => {
+              const v = parseFloat((e.target as HTMLInputElement).value);
+              setLogSpeed(v);
+              setSpeedScale(Math.pow(10, v));
+            }}
+          />
+          <span className="tabular-nums w-16 text-right">
+            {speedScale.toExponential(2)}
           </span>
         </div>
         {status && <div className="opacity-80 mt-1">{status}</div>}
