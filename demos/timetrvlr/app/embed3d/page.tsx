@@ -359,7 +359,10 @@ export default function Embed3DPage() {
         // (no per-vertex colors in production)
         // IMPORTANT: use BufferAttribute to retain a live view into
         // spritePositions so per-frame writes are visible to the GPU.
-        pointsGeom.setAttribute("position", new BufferAttribute(spritePositions, 3));
+        pointsGeom.setAttribute(
+          "position",
+          new BufferAttribute(spritePositions, 3)
+        );
         // (vertex colors removed)
         pointsGeom.setDrawRange(0, 0);
         (pointsGeom.attributes.position as THREE.BufferAttribute).setUsage?.(
@@ -532,7 +535,9 @@ export default function Embed3DPage() {
           lastX = e.clientX;
           lastY = e.clientY;
           try {
-            renderer?.domElement && (renderer.domElement.style.cursor = "none");
+            if (renderer?.domElement) {
+              renderer.domElement.style.cursor = "none";
+            }
           } catch {}
         };
         const onMouseMove = (e: MouseEvent) => {
@@ -551,13 +556,17 @@ export default function Embed3DPage() {
         const onMouseUp = () => {
           isDragging = false;
           try {
-            renderer?.domElement && (renderer.domElement.style.cursor = "");
+            if (renderer?.domElement) {
+              renderer.domElement.style.cursor = "";
+            }
           } catch {}
         };
         const onMouseLeave = () => {
           isDragging = false;
           try {
-            renderer?.domElement && (renderer.domElement.style.cursor = "");
+            if (renderer?.domElement) {
+              renderer.domElement.style.cursor = "";
+            }
           } catch {}
         };
         renderer.domElement.addEventListener("mousedown", onMouseDown);
@@ -583,9 +592,6 @@ export default function Embed3DPage() {
         const onWheel = (e: WheelEvent) => {
           if (!camera) return;
           const delta = Math.sign(e.deltaY);
-          const upVec = new Vector3(0, 1, 0)
-            .applyQuaternion(orientation)
-            .normalize();
           const baseStep = 0.05; // baseline units per wheel notch (1/4 previous)
           const scale = speedScaleRef.current;
           const boost = e.shiftKey || pressed.has("shift") ? 3.0 : 1.0;
@@ -601,7 +607,7 @@ export default function Embed3DPage() {
         // temp vectors to avoid allocations in the loop
         const tmpWorld = new Vector3();
         const tmpNdc = new Vector3();
-        let moveVel = new Vector3();
+        const moveVel = new Vector3();
         const animate = (t: number) => {
           if (disposed) return;
           const dt = Math.max(0.001, Math.min(0.1, (t - lastTime) / 1000));
@@ -703,8 +709,8 @@ export default function Embed3DPage() {
               pointsMat.size = spriteSizePx / Math.max(f, 1e-6);
             } catch {}
             let spriteCount = 0;
-            const toLoad: Array<{ idx: number; pi: PlaneItem; score: number }>
-              = [];
+            const toLoad: Array<{ idx: number; pi: PlaneItem; score: number }> =
+              [];
             for (let i = 0; i < planes.length; i++) {
               const p = planes[i];
               // World position of point i
@@ -899,8 +905,8 @@ export default function Embed3DPage() {
       <div className="absolute left-4 top-4 z-10 rounded bg-black/60 px-3 py-2 text-xs text-white">
         <div className="font-semibold">3D Embedding Viewer</div>
         <div className="opacity-80">
-          Drag: look around • Scroll: move up/down • WASD: move • Q/E: roll • Shift:
-          boost
+          Drag: look around • Scroll: move up/down • WASD: move • Q/E: roll •
+          Shift: boost
         </div>
         {/* HUD removed in production */}
         <div className="mt-2 flex items-center gap-2">
