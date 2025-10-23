@@ -187,7 +187,7 @@ export default function Embed3DPage() {
         if (Array.isArray(raw)) {
           imageIds = raw.map((v) =>
             v && typeof v === "object" && "image_id" in v
-              ? String((v as any).image_id)
+              ? String((v as Record<string, unknown>).image_id)
               : String(v ?? "")
           );
         } else if (raw && typeof raw === "object") {
@@ -198,8 +198,11 @@ export default function Embed3DPage() {
           const last = keys.length ? keys[keys.length - 1] : -1;
           imageIds = new Array(last + 1).fill("");
           for (const k of keys) {
-            const v = (raw as any)[k];
-            const id = v && typeof v === "object" && "image_id" in v ? String(v.image_id) : String(v ?? "");
+            const v = (raw as Record<string, unknown>)[k];
+            const id =
+              v && typeof v === "object" && "image_id" in v
+                ? String((v as Record<string, unknown>).image_id)
+                : String(v ?? "");
             imageIds[k] = id;
           }
         } else {
@@ -213,7 +216,9 @@ export default function Embed3DPage() {
             `[embed3d] Row count mismatch: indexJSON=${imageIds.length} vs numpy=${n}`
           );
         }
-        console.log(`[embed3d] points: ${n}; mapped image_ids: ${imageIds.length}`);
+        console.log(
+          `[embed3d] points: ${n}; mapped image_ids: ${imageIds.length}`
+        );
 
         // Center and scale to unit cube
         const mean = [0, 0, 0];
@@ -259,6 +264,11 @@ export default function Embed3DPage() {
           PlaneGeometry,
           MeshBasicMaterial,
           Mesh,
+          PointsMaterial,
+          Points,
+          BufferGeometry,
+          Float32BufferAttribute,
+          DynamicDrawUsage,
           DoubleSide,
           Group,
           TextureLoader,
@@ -296,7 +306,7 @@ export default function Embed3DPage() {
         // Ambient light for any future meshes
         scene.add(new AmbientLight(0xffffff, 0.5));
 
-        // Create billboarding planes for each point; textures load lazily
+        // Prepare billboarding plane geometry/material; meshes created lazily on visibility
         const planeSize = 0.008; // world units (height) — 10x smaller
         const planeGeom = new PlaneGeometry(1, 1);
         const baseMaterial = new MeshBasicMaterial({
@@ -308,35 +318,64 @@ export default function Embed3DPage() {
         });
         const planeGroup = new Group();
         scene.add(planeGroup);
+        // LOD thresholds (screen space in device pixels)
+        const textureLoadPx = 100; // load textures when projected height >= 100px
+        const spriteSwitchPx = 100; // if projected height < 100px, render as point sprite
+        const spriteSizePx = 2.5; // sprite CSS pixel size (will scale by DPR)
+        // Aggregated point sprites for far/very small points
+        const pointsGeom = new BufferGeometry();
+        const spritePositions = new Float32Array(n * 3);
+        pointsGeom.setAttribute(
+          "position",
+          new Float32BufferAttribute(spritePositions, 3)
+        );
+        pointsGeom.setDrawRange(0, 0);
+        (pointsGeom.attributes.position as THREE.BufferAttribute).setUsage?.(
+          DynamicDrawUsage
+        );
+        const pointsMat = new PointsMaterial({
+          color: 0x66ccff,
+          size: spriteSizePx, // temporary, will scale by DPR below
+          sizeAttenuation: false,
+          transparent: true,
+          opacity: 0.9,
+          depthWrite: false,
+        });
+        const pointsObj = new Points(pointsGeom, pointsMat);
+        scene.add(pointsObj);
+        // Scale sprite size by renderer DPR so visual size matches CSS px
+        try {
+          const pr =
+            (
+              renderer as THREE.WebGLRenderer & { getPixelRatio?(): number }
+            ).getPixelRatio?.() ??
+            (window.devicePixelRatio || 1);
+          pointsMat.size = spriteSizePx * pr;
+        } catch {}
 
         type PlaneItem = {
-          mesh: Mesh;
+          mesh: THREE.Mesh | null;
           status: "empty" | "loading" | "ready";
           texture?: THREE.Texture;
         };
-        const planes: PlaneItem[] = [];
-        for (let i = 0; i < n; i++) {
-          const mesh = new Mesh(planeGeom, baseMaterial.clone());
-          mesh.position.set(
-            coords[i * 3 + 0],
-            coords[i * 3 + 1],
-            coords[i * 3 + 2]
-          );
-          mesh.scale.set(planeSize, planeSize, 1);
-          planeGroup.add(mesh);
-          planes.push({ mesh, status: "empty" });
-        }
+        const planes: PlaneItem[] = new Array(n).fill(null).map(() => ({
+          mesh: null,
+          status: "empty",
+        }));
 
         const loader = new TextureLoader();
-        (loader as any).setCrossOrigin?.("anonymous");
+        (
+          loader as THREE.TextureLoader & {
+            setCrossOrigin?(crossOrigin: string): void;
+          }
+        ).setCrossOrigin?.("anonymous");
         const maxConcurrent = 4;
         let inFlight = 0;
-        // Scale threshold with planeSize so smaller planes still trigger loads
-        const thresholdFrac = 0.05 * (0.008 / 0.08); // effectively 0.005 for planeSize=0.008
         const imageUrls = imageIdsRef.current || [];
-        function maybeLoadTexture(pi: PlaneItem, idx: number, canvasH: number) {
+        function maybeLoadTexture(pi: PlaneItem, idx: number) {
           if (!imageUrls || !imageUrls[idx]) return;
           if (pi.status !== "empty" || inFlight >= maxConcurrent) return;
+          if (!pi.mesh) return; // ensure mesh exists before texturing
           const url = imageUrls[idx];
           if (!url) return;
           pi.status = "loading";
@@ -344,24 +383,45 @@ export default function Embed3DPage() {
           loader.load(
             url,
             (tex) => {
+              // Mesh may have been culled/removed while the image was loading.
+              // Gracefully drop the texture without treating it as an error.
+              if (disposed || !pi.mesh) {
+                try {
+                  (tex as THREE.Texture & { dispose?(): void }).dispose?.();
+                } catch {}
+                pi.status = "empty";
+                inFlight--;
+                return;
+              }
               try {
                 pi.texture = tex;
-                (tex as any).colorSpace = SRGBColorSpace;
-                const mat = pi.mesh.material as MeshBasicMaterial;
-                mat.map = tex as any;
+                (tex as THREE.Texture & { colorSpace?: string }).colorSpace =
+                  SRGBColorSpace;
+                const mat = pi.mesh.material as THREE.MeshBasicMaterial;
+                mat.map = tex as THREE.Texture;
                 mat.color.set(0xffffff);
                 mat.needsUpdate = true;
                 // Maintain aspect ratio: height = planeSize
-                const iw = (tex as any).image?.width || 1;
-                const ih = (tex as any).image?.height || 1;
+                const iw =
+                  (
+                    tex as THREE.Texture & {
+                      image?: { width?: number; height?: number };
+                    }
+                  ).image?.width || 1;
+                const ih =
+                  (
+                    tex as THREE.Texture & {
+                      image?: { width?: number; height?: number };
+                    }
+                  ).image?.height || 1;
                 const aspect = iw / Math.max(ih, 1);
                 pi.mesh.scale.set(planeSize * aspect, planeSize, 1);
                 pi.status = "ready";
-              } catch (e) {
-                console.error("apply texture failed", e);
+              } catch {
+                // Convert to a safe fallback without noisy logging
                 pi.status = "empty";
                 try {
-                  (tex as any).dispose?.();
+                  (tex as THREE.Texture & { dispose?(): void }).dispose?.();
                 } catch {}
               } finally {
                 inFlight--;
@@ -377,18 +437,32 @@ export default function Embed3DPage() {
         }
 
         function maybeUnloadTexture(pi: PlaneItem) {
-          if (pi.status !== "ready") return;
-          const mat = pi.mesh.material as MeshBasicMaterial;
-          if (mat.map) {
+          if (!pi.mesh) return;
+          const mat = pi.mesh.material as THREE.MeshBasicMaterial;
+          if (
+            mat &&
+            (mat as THREE.MeshBasicMaterial & { map?: THREE.Texture | null })
+              .map
+          ) {
             try {
-              (mat.map as any).dispose?.();
+              (
+                (
+                  mat as THREE.MeshBasicMaterial & {
+                    map?: THREE.Texture | null;
+                  }
+                ).map as THREE.Texture & { dispose?(): void }
+              )?.dispose?.();
             } catch {}
-            (mat as any).map = null;
+            (
+              mat as THREE.MeshBasicMaterial & { map?: THREE.Texture | null }
+            ).map = null;
             mat.color.set(0x66ccff);
             mat.needsUpdate = true;
           }
-          // Reset to square placeholder
-          pi.mesh.scale.set(planeSize, planeSize, 1);
+          // Reset to square placeholder if mesh persists
+          try {
+            pi.mesh.scale.set(planeSize, planeSize, 1);
+          } catch {}
           pi.texture = undefined;
           pi.status = "empty";
         }
@@ -460,6 +534,15 @@ export default function Embed3DPage() {
           renderer.setSize(w, h);
           camera.aspect = w / h;
           camera.updateProjectionMatrix();
+          // Keep sprite size consistent with CSS pixels across DPR changes
+          try {
+            const pr =
+              (
+                renderer as THREE.WebGLRenderer & { getPixelRatio?(): number }
+              ).getPixelRatio?.() ??
+              (window.devicePixelRatio || 1);
+            pointsMat.size = spriteSizePx * pr;
+          } catch {}
         }
         window.addEventListener("resize", onResize);
 
@@ -526,46 +609,104 @@ export default function Embed3DPage() {
           if (camera && renderer) {
             const h = renderer.domElement.height;
             const f =
-              0.5 * h /
+              (0.5 * h) /
               Math.tan(
-                MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov * 0.5)
+                MathUtils.degToRad(
+                  (camera as THREE.PerspectiveCamera).fov * 0.5
+                )
               );
+            let spriteCount = 0;
             for (let i = 0; i < planes.length; i++) {
               const p = planes[i];
-              // Face camera (use current orientation)
-              p.mesh.quaternion.copy(orientation);
+              // World position of point i
+              tmpWorld.set(
+                coords[i * 3 + 0],
+                coords[i * 3 + 1],
+                coords[i * 3 + 2]
+              );
               // Preclip: skip offscreen or beyond near/far by projecting to NDC
-              p.mesh.getWorldPosition(tmpWorld);
               tmpNdc.copy(tmpWorld).project(camera);
               const inFrustum =
-                tmpNdc.x >= -1 && tmpNdc.x <= 1 &&
-                tmpNdc.y >= -1 && tmpNdc.y <= 1 &&
-                tmpNdc.z >= -1 && tmpNdc.z <= 1;
+                tmpNdc.x >= -1 &&
+                tmpNdc.x <= 1 &&
+                tmpNdc.y >= -1 &&
+                tmpNdc.y <= 1 &&
+                tmpNdc.z >= -1 &&
+                tmpNdc.z <= 1;
               if (!inFrustum) {
-                // Hide and free texture if any
-                if (p.mesh.visible) p.mesh.visible = false;
-                const mat = p.mesh.material as MeshBasicMaterial;
-                if ((mat as any).map) {
-                  maybeUnloadTexture(p);
+                // Offscreen: unload texture and remove mesh if exists
+                if (p.mesh) {
+                  try {
+                    maybeUnloadTexture(p);
+                  } catch (e) {
+                    console.error(e);
+                  }
+                  // remove from scene and dispose material
+                  try {
+                    planeGroup.remove(p.mesh);
+                  } catch {}
+                  try {
+                    (p.mesh.material as THREE.Material).dispose?.();
+                  } catch {}
+                  p.mesh = null;
                 }
                 continue;
-              } else if (!p.mesh.visible) {
-                p.mesh.visible = true;
               }
               // Estimate on-screen height in pixels for current placeholder height (planeSize)
-              const dist = camera.position.distanceTo(p.mesh.position);
+              const dist = camera.position.distanceTo(tmpWorld);
               const screenHeightPx = (planeSize * f) / Math.max(dist, 1e-6);
-              const bigEnough = screenHeightPx >= thresholdFrac * h;
+              // If too small, render as point sprite (no texture)
+              if (screenHeightPx < spriteSwitchPx) {
+                // Ensure there is no mesh
+                if (p.mesh) {
+                  try {
+                    maybeUnloadTexture(p);
+                  } catch (e) {
+                    console.error(e);
+                  }
+                  try {
+                    planeGroup.remove(p.mesh);
+                  } catch {}
+                  try {
+                    (p.mesh.material as THREE.Material).dispose?.();
+                  } catch {}
+                  p.mesh = null;
+                }
+                const base = spriteCount * 3;
+                spritePositions[base + 0] = tmpWorld.x;
+                spritePositions[base + 1] = tmpWorld.y;
+                spritePositions[base + 2] = tmpWorld.z;
+                spriteCount++;
+                continue;
+              }
+              // Ensure mesh exists for visible point
+              if (!p.mesh) {
+                const mesh = new Mesh(planeGeom, baseMaterial.clone());
+                mesh.position.copy(tmpWorld);
+                mesh.scale.set(planeSize, planeSize, 1);
+                planeGroup.add(mesh);
+                p.mesh = mesh;
+              }
+              // Face camera (use current orientation)
+              if (p.mesh) p.mesh.quaternion.copy(orientation);
+              const bigEnough = screenHeightPx >= textureLoadPx;
               if (bigEnough) {
-                maybeLoadTexture(p, i, h);
+                maybeLoadTexture(p, i);
               } else {
                 // If currently textured, unload to save memory
-                const mat = p.mesh.material as MeshBasicMaterial;
-                if ((mat as any).map) {
+                try {
                   maybeUnloadTexture(p);
+                } catch (e) {
+                  console.error(e);
                 }
               }
             }
+            // Update sprite geometry draw range and flag update
+            pointsGeom.setDrawRange(0, spriteCount);
+            const posAttr = pointsGeom.getAttribute(
+              "position"
+            ) as THREE.BufferAttribute;
+            posAttr.needsUpdate = true;
           }
 
           if (renderer && scene && camera) {
