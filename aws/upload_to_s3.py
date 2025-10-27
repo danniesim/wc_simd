@@ -30,6 +30,50 @@ def upload_file_to_s3(local_path, s3_root, repo_root):
     print(f"Uploaded {local_path} to s3://{bucket_name}/{full_key}")
 
 
+def upload_directory_to_s3(local_path, s3_root, repo_root):
+    """Upload a directory recursively to S3."""
+    # Ensure SSO session is valid before proceeding
+    if not is_sso_session_valid(DEFAULT_PROFILE):
+        if not perform_sso_login():
+            sys.exit(1)
+
+    s3 = boto3.client('s3')
+    abs_repo_root = os.path.abspath(repo_root)
+    abs_local_path = os.path.abspath(local_path)
+
+    if not abs_local_path.startswith(abs_repo_root):
+        raise ValueError("Directory is not inside the repository root.")
+
+    if not os.path.isdir(abs_local_path):
+        raise ValueError(f"Path {local_path} is not a directory.")
+
+    parsed = urlparse(s3_root)
+    if parsed.scheme != "s3":
+        raise ValueError("s3_root must be an S3 URI (s3://bucket/prefix)")
+
+    bucket_name = parsed.netloc
+    prefix = parsed.path.lstrip("/")
+
+    uploaded_count = 0
+
+    # Walk through all files in the directory
+    for root, dirs, files in os.walk(abs_local_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            s3_key = os.path.relpath(file_path, abs_repo_root)
+            full_key = f"{prefix}/{s3_key}" if prefix else s3_key
+
+            try:
+                s3.upload_file(file_path, bucket_name, full_key)
+                print(
+                    f"Uploaded {os.path.relpath(file_path, abs_repo_root)} to s3://{bucket_name}/{full_key}")
+                uploaded_count += 1
+            except Exception as e:
+                print(f"Error uploading {file_path}: {e}", file=sys.stderr)
+
+    print(f"Successfully uploaded {uploaded_count} files from {local_path}")
+
+
 def list_s3_under_root(
         s3_root: str, relative_prefix: str = "", show_sizes: bool = False,
         limit: int | None = None):
@@ -209,7 +253,7 @@ if __name__ == "__main__":
         help="Download a repo-relative file or directory (with --recursive) from S3 root")
     parser.add_argument(
         "--recursive", action="store_true",
-        help="When used with --download treat the path as a prefix and download all objects underneath")
+        help="Upload directories recursively or download all objects under a prefix")
     parser.add_argument(
         "--overwrite",
         action="store_true",
@@ -236,4 +280,16 @@ if __name__ == "__main__":
     else:
         if not args.file_path:
             parser.error("file_path is required unless --list is used")
-        upload_file_to_s3(args.file_path, args.s3_root, args.repo_root)
+
+        # Check if the path is a directory and handle accordingly
+        if args.recursive:
+            if not os.path.isdir(args.file_path):
+                parser.error(
+                    f"--recursive flag used but {args.file_path} is not a directory")
+            upload_directory_to_s3(
+                args.file_path, args.s3_root, args.repo_root)
+        else:
+            if os.path.isdir(args.file_path):
+                parser.error(
+                    f"{args.file_path} is a directory. Use --recursive flag to upload directories")
+            upload_file_to_s3(args.file_path, args.s3_root, args.repo_root)
