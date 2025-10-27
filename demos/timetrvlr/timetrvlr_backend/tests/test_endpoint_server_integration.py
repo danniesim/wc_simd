@@ -106,7 +106,9 @@ def test_embed_endpoint_via_http_with_real_model(tmp_path):
         assert data.get("count") == 1
         embs = data.get("embeddings")
         assert isinstance(embs, list) and len(embs) == 1
-        assert isinstance(embs[0], list) and len(embs[0]) > 0
+        assert isinstance(embs[0], list)
+        # With VAE3D configured, vectors should be 3D
+        assert len(embs[0]) == 3
         assert all(isinstance(v, (int, float)) for v in embs[0])
     finally:
         # Gracefully stop the server

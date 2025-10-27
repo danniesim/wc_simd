@@ -67,7 +67,11 @@ dependencies = [
     "umap-learn>=0.5.9.post2",
     "bokeh>=3.8.0",
     "requests-cache>=1.2.1",
+    "wc-simd",
 ]
+
+[tool.uv.sources]
+wc-simd = { path = "../../../", editable = true }
 
 [tool.pdm.dev-dependencies]
 dev = []
