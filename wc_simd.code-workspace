@@ -1,17 +1,14 @@
 {
-	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"path": "demos/imagetalk/backend"
-		},
-		{
-			"path": "demos/imagetalk/frontend"
-		},
-		{
-			"path": "demos/imagetalk/embed_backend"
-		}
-	],
-	"settings": {}
+  "folders": [
+    {
+      "path": "."
+    },
+    {
+      "path": "demos/timetrvlr"
+    },
+    {
+      "path": "demos/timetrvlr/timetrvlr_backend"
+    }
+  ],
+  "settings": {}
 }
