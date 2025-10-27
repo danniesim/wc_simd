@@ -310,12 +310,32 @@ export default function Embed3DPage() {
         const height = containerRef.current.clientHeight;
 
         renderer = new WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setSize(width, height);
+        // Use 100% sizing via CSS and drive the drawingBuffer size from a
+        // ResizeObserver so layout changes (not just window resizes) are handled.
+        renderer.setSize(width, height, false);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
         if ("outputColorSpace" in renderer) {
           renderer.outputColorSpace = SRGBColorSpace;
         }
         containerRef.current.appendChild(renderer.domElement);
+        try {
+          const el = renderer.domElement as HTMLCanvasElement & {
+            style: CSSStyleDeclaration;
+          };
+          el.style.position = "absolute";
+          el.style.inset = "0";
+          el.style.width = "100%";
+          el.style.height = "100%";
+          el.style.display = "block"; // avoid inline-canvas baseline quirks
+        } catch {}
+        try {
+          // Ensure any previous scissor/view offsets are cleared and we
+          // render to the full canvas area.
+          renderer.setScissorTest(false);
+          const dbw = renderer.domElement.width;
+          const dbh = renderer.domElement.height;
+          renderer.setViewport(0, 0, dbw, dbh);
+        } catch {}
 
         scene = new Scene();
         scene.background = new Color(0x000000);
@@ -326,6 +346,10 @@ export default function Embed3DPage() {
         const nearPlane = Math.max(1e-6, Math.min(0.005, zClip * 0.05));
         camera = new PerspectiveCamera(60, width / height, nearPlane, zClip);
         camera.position.set(0, 0, cameraDistance);
+        // Ensure initial view is centered on the normalized point cloud.
+        // Relying on default -Z direction can leave the cloud off-center
+        // if any prior state or device/browser quirks affect orientation.
+        camera.lookAt(0, 0, 0);
         camera.updateProjectionMatrix();
 
         // Expose for reactive updates
@@ -577,16 +601,27 @@ export default function Embed3DPage() {
         // Axes helper (tiny)
         // const axes = new AxesHelper(1); scene.add(axes);
 
-        function onResize() {
-          if (!containerRef.current || !renderer || !camera) return;
-          const w = containerRef.current.clientWidth;
-          const h = containerRef.current.clientHeight;
-          renderer.setSize(w, h);
-          camera.aspect = w / h;
-          camera.updateProjectionMatrix();
-          // Sprite size will be recalculated in the animation loop from FOV/height
+        // Observe container size precisely (fonts/UI/layout may change size
+        // without a window resize event)
+        let ro: ResizeObserver | null = null;
+        if (containerRef.current) {
+          ro = new ResizeObserver(() => {
+            if (!containerRef.current || !renderer || !camera) return;
+            const w = containerRef.current.clientWidth;
+            const h = containerRef.current.clientHeight;
+            renderer.setSize(w, h, false);
+            try {
+              const dbw = renderer.domElement.width;
+              const dbh = renderer.domElement.height;
+              renderer.setViewport(0, 0, dbw, dbh);
+            } catch {}
+            camera.aspect = Math.max(1e-6, w / Math.max(h, 1));
+            camera.updateProjectionMatrix();
+          });
+          try {
+            ro.observe(containerRef.current);
+          } catch {}
         }
-        window.addEventListener("resize", onResize);
 
         // Wheel to translate camera up/down relative to viewport, respecting speed (smoothed)
         const onWheel = (e: WheelEvent) => {
@@ -827,7 +862,7 @@ export default function Embed3DPage() {
         return () => {
           disposed = true;
           if (animationId !== null) cancelAnimationFrame(animationId);
-          window.removeEventListener("resize", onResize);
+          try { ro?.disconnect?.(); } catch {}
           window.removeEventListener("keydown", onKeyDown);
           window.removeEventListener("keyup", onKeyUp);
           renderer?.domElement?.removeEventListener("wheel", onWheel);
