@@ -139,6 +139,21 @@ export default function Embed3DPage() {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const zClipRef = useRef<number>(3.0);
   const speedScaleRef = useRef<number>(3.0);
+  // Normalization references for mapping raw -> rendered coordinates
+  const meanRef = useRef<[number, number, number] | null>(null);
+  const scaleRef = useRef<number>(1.0);
+  // Imperative updater to place a marker at mapped position
+  const updateQueryMarkerRef = useRef<((x: number, y: number, z: number) => void) | null>(null);
+  // Normalized coordinates buffer (optional diagnostics)
+  const coordsRef = useRef<Float32Array | null>(null);
+
+  // Simple text -> 3D point query (top-right UI)
+  const [queryText, setQueryText] = useState<string>("");
+  const [queryLoading, setQueryLoading] = useState<boolean>(false);
+  const [queryError, setQueryError] = useState<string>("");
+  const [queryPoint, setQueryPoint] = useState<number[] | null>(null);
+  // Use Next.js rewrite proxy to avoid CORS: /backend/* -> BACKEND_BASE/*
+  const API_PREFIX = "/backend";
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer | null = null;
@@ -272,11 +287,15 @@ export default function Embed3DPage() {
           );
         }
         const s = 1.0 / maxAbs;
+        // Persist normalization params for later mapping
+        meanRef.current = [mean[0], mean[1], mean[2]];
+        scaleRef.current = s;
         for (let i = 0; i < n; i++) {
           coords[i * 3 + 0] *= s;
           coords[i * 3 + 1] *= s;
           coords[i * 3 + 2] *= s;
         }
+        (coordsRef as React.MutableRefObject<Float32Array | null>).current = coords;
 
         setStatus(`Rendering ${n} points...`);
 
@@ -293,6 +312,7 @@ export default function Embed3DPage() {
           PlaneGeometry,
           MeshBasicMaterial,
           Mesh,
+          SphereGeometry,
           PointsMaterial,
           Points,
           BufferGeometry,
@@ -358,6 +378,21 @@ export default function Embed3DPage() {
 
         // Ambient light for any future meshes
         scene.add(new AmbientLight(0xffffff, 0.5));
+
+        // Marker for text-query 3D point (created lazily on first update)
+        let queryMarker: THREE.Mesh | null = null;
+        updateQueryMarkerRef.current = (x: number, y: number, z: number) => {
+          if (!planeGroup) return;
+          if (!queryMarker) {
+            const geom = new SphereGeometry(0.02, 16, 12);
+            const mat = new MeshBasicMaterial({ color: 0xffcc00 });
+            queryMarker = new Mesh(geom, mat);
+            planeGroup.add(queryMarker);
+          }
+          try {
+            queryMarker.position.set(x, y, z);
+          } catch {}
+        };
 
         // Prepare billboarding plane geometry/material; meshes created lazily on visibility
         const planeSize = 0.008; // world units (height) — 10x smaller
@@ -535,14 +570,56 @@ export default function Embed3DPage() {
 
         // Keyboard navigation (WASD + QE)
         const pressed = new Set<string>();
+        // Ignore key events when typing in inputs/textareas/contenteditable
+        const isEditableTarget = (ev: KeyboardEvent): boolean => {
+          try {
+            const t = ev.target as HTMLElement | null;
+            const active = (typeof document !== "undefined" && document.activeElement) as
+              | (HTMLElement | null)
+              | undefined;
+            const el = (t as HTMLElement) || (active as HTMLElement) || null;
+            if (!el) return false;
+            if (el.isContentEditable) return true;
+            const tag = (el.tagName || "").toLowerCase();
+            if (tag === "input" || tag === "textarea" || tag === "select") return true;
+            // Consider common editable roles
+            const role = (el.getAttribute?.("role") || "").toLowerCase();
+            if (role === "textbox" || role === "combobox" || role === "searchbox") return true;
+            return false;
+          } catch {
+            // On any unexpected error, be safe and treat as editable to avoid jarring UX
+            return true;
+          }
+        };
         const onKeyDown = (e: KeyboardEvent) => {
+          if (isEditableTarget(e)) return;
           pressed.add(e.key.toLowerCase());
         };
         const onKeyUp = (e: KeyboardEvent) => {
+          // Always process keyup to avoid sticky keys if focus changed
           pressed.delete(e.key.toLowerCase());
+        };
+        // Clear any active movement when focusing into an editable element
+        const onFocusIn = (e: FocusEvent) => {
+          try {
+            const target = e.target as HTMLElement | null;
+            if (!target) return;
+            if (
+              target.isContentEditable ||
+              ["input", "textarea", "select"].includes(
+                (target.tagName || "").toLowerCase()
+              ) ||
+              ["textbox", "combobox", "searchbox"].includes(
+                (target.getAttribute?.("role") || "").toLowerCase()
+              )
+            ) {
+              pressed.clear();
+            }
+          } catch {}
         };
         window.addEventListener("keydown", onKeyDown);
         window.addEventListener("keyup", onKeyUp);
+        window.addEventListener("focusin", onFocusIn as any);
 
         // Mouse look (left-drag) using quaternion orientation (no gimbal lock)
         let isDragging = false;
@@ -862,9 +939,12 @@ export default function Embed3DPage() {
         return () => {
           disposed = true;
           if (animationId !== null) cancelAnimationFrame(animationId);
-          try { ro?.disconnect?.(); } catch {}
+          try {
+            ro?.disconnect?.();
+          } catch {}
           window.removeEventListener("keydown", onKeyDown);
           window.removeEventListener("keyup", onKeyUp);
+          window.removeEventListener("focusin", onFocusIn as any);
           renderer?.domElement?.removeEventListener("wheel", onWheel);
           renderer?.domElement?.removeEventListener("mousedown", onMouseDown);
           window.removeEventListener("mousemove", onMouseMove);
@@ -884,6 +964,15 @@ export default function Embed3DPage() {
               }
             }
           });
+          // Dispose explicit query marker if created
+          try {
+            if (queryMarker) {
+              (queryMarker.geometry as THREE.BufferGeometry)?.dispose?.();
+              (queryMarker.material as THREE.Material)?.dispose?.();
+              planeGroup?.remove(queryMarker);
+              queryMarker = null;
+            }
+          } catch {}
           renderer?.dispose?.();
           try {
             if (renderer?.domElement) renderer.domElement.style.cursor = "";
@@ -988,6 +1077,154 @@ export default function Embed3DPage() {
         </div>
         {status && <div className="opacity-80 mt-1">{status}</div>}
         {error && <div className="text-red-400 mt-1">Error: {error}</div>}
+      </div>
+
+      {/* Top-right: text -> /embed 3D point */}
+      <div className="absolute right-4 top-4 z-10 rounded bg-black/60 px-3 py-2 text-xs text-white w-80">
+        <div className="font-semibold mb-1">Text to 3D point</div>
+        <div className="flex gap-2 mb-2">
+          <input
+            className="flex-1 rounded bg-black/40 px-2 py-1 text-white outline-none border border-white/20"
+            type="text"
+            placeholder="Describe an image..."
+            value={queryText}
+            onChange={(e) => setQueryText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                (async () => {
+                  setQueryError("");
+                  setQueryPoint(null);
+                  if (!queryText.trim()) return;
+                  setQueryLoading(true);
+                  try {
+                    const resp = await fetch(`${API_PREFIX}/embed`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ texts: [queryText.trim()] }),
+                    });
+                    if (!resp.ok) {
+                      const txt = await resp.text();
+                      throw new Error(`HTTP ${resp.status}: ${txt}`);
+                    }
+                    const data = (await resp.json()) as {
+                      embeddings?: number[][];
+                      count?: number;
+                    };
+                    const v =
+                      Array.isArray(data.embeddings) && data.embeddings[0];
+                    if (!v || !Array.isArray(v))
+                      throw new Error("Invalid response");
+                    if (v.length !== 3) {
+                      throw new Error(
+                        `Backend returned ${Array.isArray(v) ? v.length : "?"}D; expected 3D. Check VAE checkpoint.`
+                      );
+                    }
+                    // Expect 3D; if higher-D, show the first 3 components
+                    const p = v.slice(0, 3).map((x) => Number(x));
+                    if (p.length !== 3 || p.some((x) => !Number.isFinite(x))) {
+                      throw new Error("Response is not a valid 3D vector");
+                    }
+                    setQueryPoint(p);
+                    // Map raw -> rendered space and place marker
+                    const m = meanRef.current;
+                    const sc = scaleRef.current;
+                    if (m && Number.isFinite(sc) && sc !== 0) {
+                      const nx = (p[0] - m[0]) * sc;
+                      const ny = (p[1] - m[1]) * sc;
+                      const nz = (p[2] - m[2]) * sc;
+                      updateQueryMarkerRef.current?.(nx, ny, nz);
+                    }
+                  } catch (err) {
+                    setQueryError(
+                      err instanceof Error ? err.message : String(err)
+                    );
+                  } finally {
+                    setQueryLoading(false);
+                  }
+                })();
+              }
+            }}
+            disabled={queryLoading}
+          />
+          <button
+            className="rounded bg-white/20 px-2 py-1 hover:bg-white/30 disabled:opacity-50"
+            onClick={async () => {
+              setQueryError("");
+              setQueryPoint(null);
+              if (!queryText.trim()) return;
+              setQueryLoading(true);
+              try {
+                const resp = await fetch(`${API_PREFIX}/embed`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ texts: [queryText.trim()] }),
+                });
+                if (!resp.ok) {
+                  const txt = await resp.text();
+                  throw new Error(`HTTP ${resp.status}: ${txt}`);
+                }
+                const data = (await resp.json()) as {
+                  embeddings?: number[][];
+                  count?: number;
+                };
+                const v = Array.isArray(data.embeddings) && data.embeddings[0];
+                if (!v || !Array.isArray(v))
+                  throw new Error("Invalid response");
+                if (v.length !== 3) {
+                  throw new Error(
+                    `Backend returned ${Array.isArray(v) ? v.length : "?"}D; expected 3D. Check VAE checkpoint.`
+                  );
+                }
+                const p = v.slice(0, 3).map((x) => Number(x));
+                if (p.length !== 3 || p.some((x) => !Number.isFinite(x))) {
+                  throw new Error("Response is not a valid 3D vector");
+                }
+                console.log("Embedded point", p);
+                setQueryPoint(p);
+                // Map raw -> rendered space and place marker
+                const m = meanRef.current;
+                const sc = scaleRef.current;
+                if (m && Number.isFinite(sc) && sc !== 0) {
+                  const nx = (p[0] - m[0]) * sc;
+                  const ny = (p[1] - m[1]) * sc;
+                  const nz = (p[2] - m[2]) * sc;
+                  updateQueryMarkerRef.current?.(nx, ny, nz);
+                }
+              } catch (err) {
+                setQueryError(err instanceof Error ? err.message : String(err));
+              } finally {
+                setQueryLoading(false);
+              }
+            }}
+            disabled={queryLoading}
+          >
+            {queryLoading ? "Embedding..." : "Embed"}
+          </button>
+        </div>
+        {queryError && (
+          <div className="text-red-400 mb-1">Error: {queryError}</div>
+        )}
+        {queryPoint && (
+          <div className="text-xs opacity-90">
+            <div className="font-medium">Returned 3D point (raw)</div>
+            <div className="tabular-nums mb-1">[{queryPoint.map((x) => x.toFixed(4)).join(", ")}]</div>
+            {meanRef.current && (
+              <div>
+                <div className="font-medium">Mapped to rendered space</div>
+                <div className="tabular-nums">
+                  {(() => {
+                    const m = meanRef.current!;
+                    const sc = scaleRef.current;
+                    const nx = (queryPoint[0] - m[0]) * sc;
+                    const ny = (queryPoint[1] - m[1]) * sc;
+                    const nz = (queryPoint[2] - m[2]) * sc;
+                    return `[${[nx, ny, nz].map((v) => v.toFixed(4)).join(", ")}]`;
+                  })()}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
