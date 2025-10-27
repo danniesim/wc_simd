@@ -1,12 +1,20 @@
-"""Flask backend exposing text embedding inference using the GME model."""
+"""Flask backend exposing text embedding inference using the GME model.
+
+Augmented to project HF embeddings into 3D using a trained VAE3D.
+"""
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List
+import os
+from pathlib import Path
+from typing import Iterable, List, Optional
 
+import numpy as np
 import torch
 from flask import Flask, jsonify, request
 from transformers import AutoModel
+
+from wc_simd.vlm_embed_vae import VAE3DWrapper
 
 LOGGER = logging.getLogger(__name__)
 
@@ -14,14 +22,30 @@ app = Flask(__name__)
 
 MODEL_ID = "Alibaba-NLP/gme-Qwen2-VL-2B-Instruct"
 DEFAULT_INSTRUCTION = "Find an image that matches the given text."
+VAE_CKPT_ENV = "TIMETRVLR_VAE_CKPT"
+
+# Default VAE checkpoint relative to repo root (runs/vlm_embed_vae3d_hires_1/vae3d.pt)
+DEFAULT_VAE_CKPT: Optional[Path] = (
+    Path(__file__).resolve().parents[4] / "runs" / "vlm_embed_vae3d_hires_1" / "vae3d.pt"
+)
 
 
 class EmbeddingService:
-    """Lazy-load the HF model and provide embedding helpers."""
+    """Lazy-load the HF model and provide embedding + 3D projection helpers."""
 
-    def __init__(self, model_id: str = MODEL_ID) -> None:
+    def __init__(self, model_id: str = MODEL_ID, vae_ckpt: Optional[str] = None) -> None:
         self._model_id = model_id
         self._model = None
+        # Resolve VAE checkpoint from explicit arg, env override, or default
+        env_ckpt = os.getenv(VAE_CKPT_ENV)
+        self._vae_ckpt_path: Optional[Path] = None
+        if vae_ckpt or env_ckpt:
+            self._vae_ckpt_path = Path(vae_ckpt or env_ckpt).expanduser().resolve()
+        elif DEFAULT_VAE_CKPT and DEFAULT_VAE_CKPT.exists():
+            self._vae_ckpt_path = DEFAULT_VAE_CKPT.resolve()
+        else:
+            self._vae_ckpt_path = None
+        self._vae_wrapper: Optional[VAE3DWrapper] = None
 
     @property
     def model(self):
@@ -31,12 +55,46 @@ class EmbeddingService:
                 self._model_id, trust_remote_code=True)
         return self._model
 
+    def _get_vae(self) -> Optional[VAE3DWrapper]:
+        if self._vae_wrapper is None and self._vae_ckpt_path is not None:
+            if not self._vae_ckpt_path.exists():
+                raise FileNotFoundError(f"VAE checkpoint not found: {self._vae_ckpt_path}")
+            LOGGER.info("Loading VAE3D checkpoint: %s", self._vae_ckpt_path)
+            self._vae_wrapper = VAE3DWrapper(str(self._vae_ckpt_path))
+        return self._vae_wrapper
+
     def embed(self, texts: Iterable[str],
               instruction: str = DEFAULT_INSTRUCTION) -> List[List[float]]:
+        """Return raw HF embeddings as lists of floats."""
         with torch.inference_mode():
             embeddings = self.model.get_text_embeddings(
                 texts=list(texts), instruction=instruction)
         return embeddings.tolist()
+
+    def embed3d(self, texts: Iterable[str],
+                instruction: str = DEFAULT_INSTRUCTION) -> List[List[float]]:
+        """Return 3D vectors by projecting HF embeddings through VAE3D.
+
+        Falls back to raw embeddings if no VAE checkpoint is configured.
+        """
+        with torch.inference_mode():
+            embs = self.model.get_text_embeddings(
+                texts=list(texts), instruction=instruction)
+
+        vae = self._get_vae()
+        if vae is None:
+            # No checkpoint configured; return raw embeddings for safety
+            LOGGER.warning("VAE checkpoint not configured. Returning raw embeddings.")
+            return embs.tolist()
+
+        try:
+            X = np.asarray(embs, dtype=np.float32)
+            Z = vae.to3d(X, use_mu=True, batch_size=max(64, min(4096, len(X) or 1)))
+            return Z.tolist()
+        except Exception:
+            # Log internal error; convert to 500 at boundary
+            LOGGER.exception("VAE projection failed")
+            raise
 
 
 service = EmbeddingService()
@@ -63,7 +121,8 @@ def embed_endpoint():
         return jsonify({"error": "'instruction' must be a string."}), 400
 
     try:
-        embeddings = service.embed(texts, instruction=instruction)
+        # Produce 3D coordinates instead of full-dim embeddings
+        embeddings = service.embed3d(texts, instruction=instruction)
     except Exception as exc:  # pragma: no cover - bubble up inference issues
         LOGGER.exception("Embedding generation failed")
         return jsonify({"error": str(exc)}), 500

@@ -2803,7 +2803,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.5.1.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/78/4535c9c7f859a64781e43c969a3a7e84c54634e319a996d43ef32ce46f83/nvidia_cudnn_cu12-9.5.1.17-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:30ac3869f6db17d170e0e556dd6cc5eee02647abc31ca856634d5a40f82c15b2", size = 570988386, upload-time = "2024-10-25T19:54:26.39Z" },
@@ -2814,7 +2814,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8f/16/73727675941ab8e6ffd86ca3a4b7b47065edcca7a997920b831f8147c99d/nvidia_cufft_cu12-11.3.0.4-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ccba62eb9cef5559abd5e0d54ceed2d9934030f51163df018532142a8ec533e5", size = 200221632, upload-time = "2024-11-20T17:41:32.357Z" },
@@ -2843,9 +2843,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cusparse-cu12" },
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f0/6e/c2cf12c9ff8b872e92b4a5740701e51ff17689c4d726fca91875b07f655d/nvidia_cusolver_cu12-11.7.1.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e9e49843a7707e42022babb9bcfa33c29857a93b88020c4e4434656a655b698c", size = 158229790, upload-time = "2024-11-20T17:43:43.211Z" },
@@ -2857,7 +2857,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/06/1e/b8b7c2f4099a37b96af5c9bb158632ea9e5d9d27d7391d7eb8fc45236674/nvidia_cusparse_cu12-12.5.4.2-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7556d9eca156e18184b94947ade0fba5bb47d69cec46bf8660fd2c71a4b48b73", size = 216561367, upload-time = "2024-11-20T17:44:54.824Z" },
@@ -4974,6 +4974,7 @@ dependencies = [
     { name = "transformers" },
     { name = "umap-learn" },
     { name = "vllm" },
+    { name = "wc-simd" },
     { name = "wordcloud" },
 ]
 
@@ -5039,6 +5040,7 @@ requires-dist = [
     { name = "transformers", specifier = ">=4.50,<4.52" },
     { name = "umap-learn", specifier = ">=0.5.9.post2" },
     { name = "vllm", specifier = ">=0.8.5.post1" },
+    { name = "wc-simd", editable = "../../../" },
     { name = "wordcloud", specifier = ">=1.9.4" },
 ]
 
@@ -5227,7 +5229,7 @@ name = "triton"
 version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "setuptools" },
+    { name = "setuptools", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/04/d54d3a6d077c646624dc9461b0059e23fd5d30e0dbe67471e3654aec81f9/triton-3.3.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fad99beafc860501d7fcc1fb7045d9496cbe2c882b1674640304949165a916e7", size = 156441993, upload-time = "2025-04-09T20:27:25.107Z" },
@@ -5499,6 +5501,139 @@ wheels = [
 ]
 
 [[package]]
+name = "wc-simd"
+version = "0.1.0"
+source = { editable = "../../../" }
+dependencies = [
+    { name = "accelerate" },
+    { name = "bokeh" },
+    { name = "bson" },
+    { name = "click" },
+    { name = "dedupe" },
+    { name = "dotenv" },
+    { name = "faiss-cpu" },
+    { name = "fasttext" },
+    { name = "flask" },
+    { name = "fuzzywuzzy" },
+    { name = "huggingface-hub" },
+    { name = "instructorembedding" },
+    { name = "ipykernel" },
+    { name = "ipywidgets" },
+    { name = "langchain" },
+    { name = "langchain-aws" },
+    { name = "langchain-community" },
+    { name = "langchain-elasticsearch" },
+    { name = "langchain-huggingface" },
+    { name = "langchain-openai" },
+    { name = "langdetect" },
+    { name = "langgraph-supervisor" },
+    { name = "langsmith" },
+    { name = "matplotlib" },
+    { name = "nltk" },
+    { name = "notebook" },
+    { name = "openai" },
+    { name = "openpyxl" },
+    { name = "oracledb" },
+    { name = "paddlepaddle" },
+    { name = "pandas" },
+    { name = "pip" },
+    { name = "plotly" },
+    { name = "pyarrow" },
+    { name = "pydbml" },
+    { name = "pymysql" },
+    { name = "pyspark" },
+    { name = "pytest" },
+    { name = "python-levenshtein" },
+    { name = "requests" },
+    { name = "requests-cache" },
+    { name = "sagemaker" },
+    { name = "scikit-learn" },
+    { name = "seaborn" },
+    { name = "sentence-transformers" },
+    { name = "sglang" },
+    { name = "spacy" },
+    { name = "spacy-curated-transformers" },
+    { name = "streamlit" },
+    { name = "streamlit-cookies-manager" },
+    { name = "symspellpy" },
+    { name = "tabulate" },
+    { name = "tenacity" },
+    { name = "tensorboard" },
+    { name = "textblob" },
+    { name = "textstat" },
+    { name = "tqdm" },
+    { name = "transformers" },
+    { name = "umap-learn" },
+    { name = "vllm" },
+    { name = "wordcloud" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "accelerate", specifier = ">=1.10.1" },
+    { name = "bokeh", specifier = ">=3.8.0" },
+    { name = "bson", specifier = ">=0.5.10" },
+    { name = "click", specifier = ">=8.0.0" },
+    { name = "dedupe", specifier = ">=3.0.3" },
+    { name = "dotenv", specifier = ">=0.9.9,<0.10.0" },
+    { name = "faiss-cpu", specifier = ">=1.12.0" },
+    { name = "fasttext", specifier = ">=0.9.3" },
+    { name = "flask", specifier = ">=3.1.1" },
+    { name = "fuzzywuzzy", specifier = ">=0.18.0" },
+    { name = "huggingface-hub", specifier = ">=0.31.2" },
+    { name = "instructorembedding", specifier = ">=1.0.1" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
+    { name = "ipywidgets", specifier = ">=8.1.7" },
+    { name = "langchain", specifier = ">=0.3.23,<0.4.0" },
+    { name = "langchain-aws", specifier = ">=0.2.18,<0.3.0" },
+    { name = "langchain-community", specifier = ">=0.3.21,<0.4.0" },
+    { name = "langchain-elasticsearch", specifier = ">=0.3.2" },
+    { name = "langchain-huggingface", specifier = ">=0.3.0" },
+    { name = "langchain-openai", specifier = ">=0.3.16" },
+    { name = "langdetect", specifier = ">=1.0.9" },
+    { name = "langgraph-supervisor", specifier = ">=0.0.16,<0.0.17" },
+    { name = "langsmith", specifier = ">=0.3.27,<0.4.0" },
+    { name = "matplotlib", specifier = ">=3.10.1" },
+    { name = "nltk", specifier = ">=3.9.1" },
+    { name = "notebook", specifier = ">=7.3.3,<8.0.0" },
+    { name = "openai", specifier = ">=1.78.1" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "oracledb", specifier = ">=3.1.0" },
+    { name = "paddlepaddle", specifier = ">=3.2.0" },
+    { name = "pandas", specifier = ">=2.2.3,<3.0.0" },
+    { name = "pip", specifier = ">=25.1.1" },
+    { name = "plotly", specifier = ">=6.3.1" },
+    { name = "pyarrow", specifier = ">=20.0.0" },
+    { name = "pydbml", specifier = ">=1.2.0,<2.0.0" },
+    { name = "pymysql", specifier = ">=1.1.1" },
+    { name = "pyspark", specifier = ">=3.5.5,<4.0.0" },
+    { name = "pytest", specifier = ">=8.3.5,<9.0.0" },
+    { name = "python-levenshtein", specifier = ">=0.27.1" },
+    { name = "requests", specifier = ">=2.32.3" },
+    { name = "requests-cache", specifier = ">=1.2.1" },
+    { name = "sagemaker", specifier = ">=2.244.0" },
+    { name = "scikit-learn", specifier = ">=1.6.1" },
+    { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "sentence-transformers", specifier = ">=4.1.0" },
+    { name = "sglang", specifier = ">=0.4.6.post3" },
+    { name = "spacy", specifier = "==3.8.4" },
+    { name = "spacy-curated-transformers", specifier = ">=0.3.1" },
+    { name = "streamlit", specifier = ">=1.46.0" },
+    { name = "streamlit-cookies-manager", specifier = ">=0.2.0" },
+    { name = "symspellpy", specifier = ">=6.9.0" },
+    { name = "tabulate", specifier = ">=0.9.0" },
+    { name = "tenacity", specifier = ">=9.1.2" },
+    { name = "tensorboard", specifier = ">=2.20.0" },
+    { name = "textblob", specifier = ">=0.19.0" },
+    { name = "textstat", specifier = ">=0.7.5" },
+    { name = "tqdm", specifier = ">=4.67.1,<5.0.0" },
+    { name = "transformers", specifier = ">=4.50,<4.52" },
+    { name = "umap-learn", specifier = ">=0.5.9.post2" },
+    { name = "vllm", specifier = ">=0.8.5.post1" },
+    { name = "wordcloud", specifier = ">=1.9.4" },
+]
+
+[[package]]
 name = "wcwidth"
 version = "0.2.14"
 source = { registry = "https://pypi.org/simple" }
@@ -5652,8 +5787,8 @@ name = "xformers"
 version = "0.0.30"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "torch" },
+    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
+    { name = "torch", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/bf/f7/dd2269cce89fd1221947dd7cc3a60707ffe721ef55c1803ac3b1a1f7ae5c/xformers-0.0.30.tar.gz", hash = "sha256:a12bf3eb39e294cdbe8a7253ac9b665f41bac61d6d98df174e34ef7bdb6f2fc4", size = 10214139, upload-time = "2025-04-28T20:51:02.045Z" }
 wheels = [
