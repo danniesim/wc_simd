@@ -188,12 +188,10 @@ def loss_fn(
         raise ValueError("Source and reconstruction must share the same shape.")
     if x.shape[0] == 0:
         raise ValueError("Cannot compute loss on an empty batch.")
-    # Reconstruction now combines MSE with cosine alignment so that the decoder
-    # explicitly preserves directional information from the input vectors.
-    recon_mse = F.mse_loss(x_hat, x)
+    # Reconstruction loss purely enforces cosine alignment so that the decoder
+    # preserves directional information without relying on L2 amplitude.
     cos_sim = F.cosine_similarity(x_hat, x, dim=-1, eps=COS_EPS)
-    recon_cos = (1.0 - cos_sim).mean()
-    recon = recon_mse + recon_cos
+    recon = (1.0 - cos_sim).mean()
     with torch.no_grad():
         x_n = F.normalize(x, dim=-1)
         sim_x = pairwise_cosine(x_n)
@@ -202,8 +200,6 @@ def loss_fn(
     total = recon + sim_weight * sim_loss
     return total, {
         "recon": float(recon.detach()),
-        "recon_mse": float(recon_mse.detach()),
-        "recon_cos": float(recon_cos.detach()),
         "sim": float(sim_loss.detach())}
 
 
@@ -279,8 +275,6 @@ def train_autoencoder(
         model.train()
         total_loss = 0.0
         total_recon = 0.0
-        total_recon_mse = 0.0
-        total_recon_cos = 0.0
         total_sim = 0.0
         total_samples = 0
 
@@ -306,20 +300,16 @@ def train_autoencoder(
             total_samples += batch_size_actual
             total_loss += float(loss.detach()) * batch_size_actual
             total_recon += parts["recon"] * batch_size_actual
-            total_recon_mse += parts["recon_mse"] * batch_size_actual
-            total_recon_cos += parts["recon_cos"] * batch_size_actual
             total_sim += parts["sim"] * batch_size_actual
 
             global_step += 1
             if log_every > 0 and (global_step % log_every) == 0:
                 logger.info(
-                    "epoch %02d step %06d | loss %.4f | recon %.4f | mse %.4f | cos %.4f | sim %.4f",
+                    "epoch %02d step %06d | loss %.4f | recon %.4f | sim %.4f",
                     epoch,
                     global_step,
                     float(loss.detach()),
                     parts["recon"],
-                    parts["recon_mse"],
-                    parts["recon_cos"],
                     parts["sim"],
                 )
 
@@ -328,27 +318,21 @@ def train_autoencoder(
 
         mean_loss = total_loss / total_samples
         mean_recon = total_recon / total_samples
-        mean_recon_mse = total_recon_mse / total_samples
-        mean_recon_cos = total_recon_cos / total_samples
         mean_sim = total_sim / total_samples
         history.append(
             {
                 "epoch": epoch,
                 "loss": mean_loss,
                 "recon": mean_recon,
-                "recon_mse": mean_recon_mse,
-                "recon_cos": mean_recon_cos,
                 "sim": mean_sim,
             }
         )
 
         logger.info(
-            "epoch %02d complete | loss %.4f | recon %.4f | mse %.4f | cos %.4f | sim %.4f",
+            "epoch %02d complete | loss %.4f | recon %.4f | sim %.4f",
             epoch,
             mean_loss,
             mean_recon,
-            mean_recon_mse,
-            mean_recon_cos,
             mean_sim,
         )
 
