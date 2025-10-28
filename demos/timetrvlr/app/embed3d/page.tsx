@@ -125,6 +125,17 @@ function parseNpy(buffer: ArrayBuffer): {
 }
 
 const DEFAULT_SPEED_SCALE = 0.1;
+const PRESET_QUERY_TEXTS: readonly string[] = [
+  "photographs with a group of people",
+  "handwritten notes on a piece of paper",
+  "food labels",
+  "drawings of human anatomy",
+  "colorful paintings",
+  "black and white images",
+  "Portraits of men in historical clothing",
+  "Portrait of a Victorian-era traveler",
+  "Interior of a museum gallery",
+];
 
 export default function Embed3DPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -1100,11 +1111,15 @@ export default function Embed3DPage() {
         <div className="font-semibold mb-1">Text to 3D point</div>
         <div className="flex gap-2 mb-2">
           <input
+            list="preset-query-options"
             className="flex-1 rounded bg-black/40 px-2 py-1 text-white outline-none border border-white/20"
             type="text"
             placeholder="Describe an image..."
+            aria-label="Describe an image or pick a preset"
             value={queryText}
-            onChange={(e) => setQueryText(e.target.value)}
+            onChange={(e) => {
+              setQueryText(e.target.value);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 (async () => {
@@ -1221,6 +1236,11 @@ export default function Embed3DPage() {
             {queryLoading ? "Embedding..." : "Embed"}
           </button>
         </div>
+        <datalist id="preset-query-options">
+          {PRESET_QUERY_TEXTS.map((text) => (
+            <option key={text} value={text} />
+          ))}
+        </datalist>
         {queryError && (
           <div className="text-red-400 mb-1">Error: {queryError}</div>
         )}
