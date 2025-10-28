@@ -143,7 +143,9 @@ export default function Embed3DPage() {
   const meanRef = useRef<[number, number, number] | null>(null);
   const scaleRef = useRef<number>(1.0);
   // Imperative updater to place a marker at mapped position
-  const updateQueryMarkerRef = useRef<((x: number, y: number, z: number) => void) | null>(null);
+  const updateQueryMarkerRef = useRef<
+    ((x: number, y: number, z: number) => void) | null
+  >(null);
   // Normalized coordinates buffer (optional diagnostics)
   const coordsRef = useRef<Float32Array | null>(null);
 
@@ -154,6 +156,10 @@ export default function Embed3DPage() {
   const [queryPoint, setQueryPoint] = useState<number[] | null>(null);
   // Use Next.js rewrite proxy to avoid CORS: /backend/* -> BACKEND_BASE/*
   const API_PREFIX = "/backend";
+  // Multiplier for deriving near plane from current far clip (zClip)
+  const NEAR_PLANE_FACTOR = 0.01;
+  // Upper clamp for near plane to preserve depth precision at small zClip
+  const NEAR_PLANE_MAX = 0.002;
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer | null = null;
@@ -166,7 +172,7 @@ export default function Embed3DPage() {
       setStatus("Fetching NPY and index...");
       try {
         const res = await fetch(
-          "/iiif_no_text_embedding_matrix_vlm_embed_vae3d_hires_1.npy"
+          "/iiif_no_text_embedding_matrix_vlm_embed_ae3d_hires_1.npy"
         );
         if (!res.ok) throw new Error(`Failed to fetch NPY: ${res.status}`);
         const buf = await res.arrayBuffer();
@@ -295,7 +301,8 @@ export default function Embed3DPage() {
           coords[i * 3 + 1] *= s;
           coords[i * 3 + 2] *= s;
         }
-        (coordsRef as React.MutableRefObject<Float32Array | null>).current = coords;
+        (coordsRef as React.MutableRefObject<Float32Array | null>).current =
+          coords;
 
         setStatus(`Rendering ${n} points...`);
 
@@ -330,13 +337,10 @@ export default function Embed3DPage() {
         const height = containerRef.current.clientHeight;
 
         renderer = new WebGLRenderer({ antialias: true, alpha: true });
-        // Use 100% sizing via CSS and drive the drawingBuffer size from a
-        // ResizeObserver so layout changes (not just window resizes) are handled.
-        renderer.setSize(width, height, false);
+        // Set initial DPR and drawing buffer size; CSS controls layout size.
         renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-        if ("outputColorSpace" in renderer) {
-          renderer.outputColorSpace = SRGBColorSpace;
-        }
+        renderer.setSize(width, height, false);
+        // Append canvas to container and ensure it fills the area.
         containerRef.current.appendChild(renderer.domElement);
         try {
           const el = renderer.domElement as HTMLCanvasElement & {
@@ -348,14 +352,6 @@ export default function Embed3DPage() {
           el.style.height = "100%";
           el.style.display = "block"; // avoid inline-canvas baseline quirks
         } catch {}
-        try {
-          // Ensure any previous scissor/view offsets are cleared and we
-          // render to the full canvas area.
-          renderer.setScissorTest(false);
-          const dbw = renderer.domElement.width;
-          const dbh = renderer.domElement.height;
-          renderer.setViewport(0, 0, dbw, dbh);
-        } catch {}
 
         scene = new Scene();
         scene.background = new Color(0x000000);
@@ -363,7 +359,10 @@ export default function Embed3DPage() {
         scene.fog = new Fog(0x000000, Math.max(0, zClip * 0.6), zClip);
 
         const cameraDistance = 2.0; // start backed away so the cloud is in view
-        const nearPlane = Math.max(1e-6, Math.min(0.005, zClip * 0.05));
+        const nearPlane = Math.max(
+          1e-6,
+          Math.min(NEAR_PLANE_MAX, zClip * NEAR_PLANE_FACTOR)
+        );
         camera = new PerspectiveCamera(60, width / height, nearPlane, zClip);
         camera.position.set(0, 0, cameraDistance);
         // Ensure initial view is centered on the normalized point cloud.
@@ -395,7 +394,7 @@ export default function Embed3DPage() {
         };
 
         // Prepare billboarding plane geometry/material; meshes created lazily on visibility
-        const planeSize = 0.008; // world units (height) — 10x smaller
+        const planeSize = 0.004; // world units (height) — 2x smaller
         const planeGeom = new PlaneGeometry(1, 1);
         const baseMaterial = new MeshBasicMaterial({
           color: 0xffffff,
@@ -410,7 +409,7 @@ export default function Embed3DPage() {
         scene.add(planeGroup);
         // LOD thresholds (screen space in device pixels)
         const textureLoadPx = 100; // load textures when projected height >= 100px
-        const spriteSwitchPx = 100; // if projected height < 100px, render as point sprite
+        const spriteSwitchPx = 200; // if projected height < 200px, render as point sprite (2x previous)
         const spriteSizePx = 10.0; // 4x larger base CSS pixel size
         // Aggregated point sprites for far/very small points
         const pointsGeom = new BufferGeometry();
@@ -574,17 +573,22 @@ export default function Embed3DPage() {
         const isEditableTarget = (ev: KeyboardEvent): boolean => {
           try {
             const t = ev.target as HTMLElement | null;
-            const active = (typeof document !== "undefined" && document.activeElement) as
-              | (HTMLElement | null)
-              | undefined;
+            const active = (typeof document !== "undefined" &&
+              document.activeElement) as (HTMLElement | null) | undefined;
             const el = (t as HTMLElement) || (active as HTMLElement) || null;
             if (!el) return false;
             if (el.isContentEditable) return true;
             const tag = (el.tagName || "").toLowerCase();
-            if (tag === "input" || tag === "textarea" || tag === "select") return true;
+            if (tag === "input" || tag === "textarea" || tag === "select")
+              return true;
             // Consider common editable roles
             const role = (el.getAttribute?.("role") || "").toLowerCase();
-            if (role === "textbox" || role === "combobox" || role === "searchbox") return true;
+            if (
+              role === "textbox" ||
+              role === "combobox" ||
+              role === "searchbox"
+            )
+              return true;
             return false;
           } catch {
             // On any unexpected error, be safe and treat as editable to avoid jarring UX
@@ -686,12 +690,12 @@ export default function Embed3DPage() {
             if (!containerRef.current || !renderer || !camera) return;
             const w = containerRef.current.clientWidth;
             const h = containerRef.current.clientHeight;
+            // Update DPR in case it changed (zoom, monitor move, etc.)
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            if ((renderer as any).getPixelRatio?.() !== dpr) {
+              renderer.setPixelRatio(dpr);
+            }
             renderer.setSize(w, h, false);
-            try {
-              const dbw = renderer.domElement.width;
-              const dbh = renderer.domElement.height;
-              renderer.setViewport(0, 0, dbw, dbh);
-            } catch {}
             camera.aspect = Math.max(1e-6, w / Math.max(h, 1));
             camera.updateProjectionMatrix();
           });
@@ -1005,7 +1009,10 @@ export default function Embed3DPage() {
     const cam = cameraRef.current;
     const scn = sceneRef.current;
     if (cam) {
-      cam.near = Math.max(1e-6, Math.min(0.005, zClip * 0.05));
+      cam.near = Math.max(
+        1e-6,
+        Math.min(NEAR_PLANE_MAX, zClip * NEAR_PLANE_FACTOR)
+      );
       cam.far = zClip;
       cam.updateProjectionMatrix();
     }
@@ -1116,7 +1123,9 @@ export default function Embed3DPage() {
                       throw new Error("Invalid response");
                     if (v.length !== 3) {
                       throw new Error(
-                        `Backend returned ${Array.isArray(v) ? v.length : "?"}D; expected 3D. Check VAE checkpoint.`
+                        `Backend returned ${
+                          Array.isArray(v) ? v.length : "?"
+                        }D; expected 3D. Check VAE checkpoint.`
                       );
                     }
                     // Expect 3D; if higher-D, show the first 3 components
@@ -1172,7 +1181,9 @@ export default function Embed3DPage() {
                   throw new Error("Invalid response");
                 if (v.length !== 3) {
                   throw new Error(
-                    `Backend returned ${Array.isArray(v) ? v.length : "?"}D; expected 3D. Check VAE checkpoint.`
+                    `Backend returned ${
+                      Array.isArray(v) ? v.length : "?"
+                    }D; expected 3D. Check VAE checkpoint.`
                   );
                 }
                 const p = v.slice(0, 3).map((x) => Number(x));
@@ -1207,7 +1218,9 @@ export default function Embed3DPage() {
         {queryPoint && (
           <div className="text-xs opacity-90">
             <div className="font-medium">Returned 3D point (raw)</div>
-            <div className="tabular-nums mb-1">[{queryPoint.map((x) => x.toFixed(4)).join(", ")}]</div>
+            <div className="tabular-nums mb-1">
+              [{queryPoint.map((x) => x.toFixed(4)).join(", ")}]
+            </div>
             {meanRef.current && (
               <div>
                 <div className="font-medium">Mapped to rendered space</div>
@@ -1218,7 +1231,9 @@ export default function Embed3DPage() {
                     const nx = (queryPoint[0] - m[0]) * sc;
                     const ny = (queryPoint[1] - m[1]) * sc;
                     const nz = (queryPoint[2] - m[2]) * sc;
-                    return `[${[nx, ny, nz].map((v) => v.toFixed(4)).join(", ")}]`;
+                    return `[${[nx, ny, nz]
+                      .map((v) => v.toFixed(4))
+                      .join(", ")}]`;
                   })()}
                 </div>
               </div>
