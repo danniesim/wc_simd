@@ -124,6 +124,8 @@ function parseNpy(buffer: ArrayBuffer): {
   return { data: floatData, shape };
 }
 
+const DEFAULT_SPEED_SCALE = 0.1;
+
 export default function Embed3DPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<string>("Loading...");
@@ -132,13 +134,15 @@ export default function Embed3DPage() {
   const [zClip, setZClip] = useState<number>(3.0);
   const [logZ, setLogZ] = useState<number>(Math.log10(3.0));
   // Separate movement speed scale (log slider, same range as far clip)
-  const [speedScale, setSpeedScale] = useState<number>(3.0);
-  const [logSpeed, setLogSpeed] = useState<number>(Math.log10(3.0));
+  const [speedScale, setSpeedScale] = useState<number>(DEFAULT_SPEED_SCALE);
+  const [logSpeed, setLogSpeed] = useState<number>(
+    Math.log10(DEFAULT_SPEED_SCALE)
+  );
   const imageIdsRef = useRef<string[] | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const zClipRef = useRef<number>(3.0);
-  const speedScaleRef = useRef<number>(3.0);
+  const speedScaleRef = useRef<number>(DEFAULT_SPEED_SCALE);
   // Normalization references for mapping raw -> rendered coordinates
   const meanRef = useRef<[number, number, number] | null>(null);
   const scaleRef = useRef<number>(1.0);
@@ -160,6 +164,9 @@ export default function Embed3DPage() {
   const NEAR_PLANE_FACTOR = 0.01;
   // Upper clamp for near plane to preserve depth precision at small zClip
   const NEAR_PLANE_MAX = 0.002;
+  // Speed boost factor when Shift is held
+  const SPEED_BOOST_FACTOR = 8.0;
+  // Default speed scale
 
   useEffect(() => {
     let renderer: THREE.WebGLRenderer | null = null;
@@ -710,7 +717,8 @@ export default function Embed3DPage() {
           const delta = Math.sign(e.deltaY);
           const baseStep = 0.05; // baseline units per wheel notch (1/4 previous)
           const scale = speedScaleRef.current;
-          const boost = e.shiftKey || pressed.has("shift") ? 3.0 : 1.0;
+          const boost =
+            e.shiftKey || pressed.has("shift") ? SPEED_BOOST_FACTOR : 1.0;
           const amount = -delta * baseStep * scale * boost;
           // Accumulate and apply smoothly in the animation loop
           scrollAccum += amount;
@@ -795,7 +803,8 @@ export default function Embed3DPage() {
           if (input.lengthSq() > 0) input.normalize();
           const base = 0.8; // base units/sec at scale=1
           const scale = speedScaleRef.current;
-          const speed = (pressed.has("shift") ? 3.0 : 1.0) * base * scale;
+          const speed =
+            (pressed.has("shift") ? SPEED_BOOST_FACTOR : 1.0) * base * scale;
           const desiredVel = input.multiplyScalar(speed);
           // Exponential smoothing towards desired velocity
           const velK = 8.0; // responsiveness
