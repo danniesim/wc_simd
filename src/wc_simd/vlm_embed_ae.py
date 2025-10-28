@@ -30,6 +30,7 @@ DEFAULT_HIDDEN: Tuple[int, ...] = (512, 128)
 SIM_WEIGHT = 0.5
 LR = 1e-3
 WEIGHT_DECAY = 1e-4
+COS_EPS = 1e-8
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ---------------------------------------------------------------------------
@@ -183,16 +184,26 @@ def loss_fn(
 ) -> Tuple[torch.Tensor, dict]:
     if sim_weight < 0:
         raise ValueError("sim_weight must be non-negative.")
-    x_n = F.normalize(x, dim=-1)
-    xh_n = F.normalize(x_hat, dim=-1)
-    recon = F.mse_loss(xh_n, x_n)
+    if x.shape != x_hat.shape:
+        raise ValueError("Source and reconstruction must share the same shape.")
+    if x.shape[0] == 0:
+        raise ValueError("Cannot compute loss on an empty batch.")
+    # Reconstruction now combines MSE with cosine alignment so that the decoder
+    # explicitly preserves directional information from the input vectors.
+    recon_mse = F.mse_loss(x_hat, x)
+    cos_sim = F.cosine_similarity(x_hat, x, dim=-1, eps=COS_EPS)
+    recon_cos = (1.0 - cos_sim).mean()
+    recon = recon_mse + recon_cos
     with torch.no_grad():
+        x_n = F.normalize(x, dim=-1)
         sim_x = pairwise_cosine(x_n)
     sim_z = pairwise_cosine(z)
     sim_loss = F.mse_loss(sim_z, sim_x)
     total = recon + sim_weight * sim_loss
     return total, {
         "recon": float(recon.detach()),
+        "recon_mse": float(recon_mse.detach()),
+        "recon_cos": float(recon_cos.detach()),
         "sim": float(sim_loss.detach())}
 
 
@@ -268,6 +279,8 @@ def train_autoencoder(
         model.train()
         total_loss = 0.0
         total_recon = 0.0
+        total_recon_mse = 0.0
+        total_recon_cos = 0.0
         total_sim = 0.0
         total_samples = 0
 
@@ -275,7 +288,10 @@ def train_autoencoder(
             if not torch.is_tensor(xb):
                 raise TypeError("Dataloader must return a tensor batch.")
             xb = xb.to(device, non_blocking=True)
-            xb = F.normalize(xb, dim=-1)
+            # NOTE: Per user request we no longer L2-normalize the training
+            # input embeddings prior to encoding. The loss function still
+            # applies normalization internally for reconstruction & similarity
+            # terms.
             opt.zero_grad(set_to_none=True)
 
             with autocast_context(device):
@@ -290,16 +306,20 @@ def train_autoencoder(
             total_samples += batch_size_actual
             total_loss += float(loss.detach()) * batch_size_actual
             total_recon += parts["recon"] * batch_size_actual
+            total_recon_mse += parts["recon_mse"] * batch_size_actual
+            total_recon_cos += parts["recon_cos"] * batch_size_actual
             total_sim += parts["sim"] * batch_size_actual
 
             global_step += 1
             if log_every > 0 and (global_step % log_every) == 0:
                 logger.info(
-                    "epoch %02d step %06d | loss %.4f | recon %.4f | sim %.4f",
+                    "epoch %02d step %06d | loss %.4f | recon %.4f | mse %.4f | cos %.4f | sim %.4f",
                     epoch,
                     global_step,
-                    parts["recon"] + sim_weight * parts["sim"],
+                    float(loss.detach()),
                     parts["recon"],
+                    parts["recon_mse"],
+                    parts["recon_cos"],
                     parts["sim"],
                 )
 
@@ -308,21 +328,27 @@ def train_autoencoder(
 
         mean_loss = total_loss / total_samples
         mean_recon = total_recon / total_samples
+        mean_recon_mse = total_recon_mse / total_samples
+        mean_recon_cos = total_recon_cos / total_samples
         mean_sim = total_sim / total_samples
         history.append(
             {
                 "epoch": epoch,
                 "loss": mean_loss,
                 "recon": mean_recon,
+                "recon_mse": mean_recon_mse,
+                "recon_cos": mean_recon_cos,
                 "sim": mean_sim,
             }
         )
 
         logger.info(
-            "epoch %02d complete | loss %.4f | recon %.4f | sim %.4f",
+            "epoch %02d complete | loss %.4f | recon %.4f | mse %.4f | cos %.4f | sim %.4f",
             epoch,
             mean_loss,
             mean_recon,
+            mean_recon_mse,
+            mean_recon_cos,
             mean_sim,
         )
 
@@ -403,7 +429,8 @@ def infer_embeddings(
             end = min(start + batch_size, total)
             batch = mat[start:end].astype(np.float32, copy=False)
             xb = torch.from_numpy(batch).to(device)
-            xb = F.normalize(xb, dim=-1)
+            # No input normalization during inference to stay consistent
+            # with the revised training procedure.
             z = model.encoder(xb)
             if normalize_latent:
                 z = F.normalize(z, dim=-1)
