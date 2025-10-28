@@ -97,10 +97,6 @@ class EmbeddingService:
                 emb_array = np.asarray(embs, dtype=np.float32)
                 emb_tensor = torch.from_numpy(emb_array).to(self._device)
 
-            # Match training/inference pipeline: normalize inputs before
-            # encoding (see `train_autoencoder` and `infer_embeddings`).
-            emb_tensor = torch.nn.functional.normalize(emb_tensor, dim=-1)
-
             # Validate dimensionality against first Linear layer of encoder.
             expected_in: Optional[int] = None
             for module in self._ae_model.encoder.modules():
