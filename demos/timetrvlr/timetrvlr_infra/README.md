@@ -80,6 +80,26 @@ npx aws-cdk destroy
 - To add rewrites, custom headers, or password protection, extend the `App` definition with additional props from the alpha module as they become available.
 - Consider pinning `aws-cdk-lib` and `@aws-cdk/aws-amplify-alpha` to exact versions to avoid surprise breaking changes.
 
+## Changing repository or owner
+
+When you modify `GITHUB_OWNER` or `GITHUB_REPO` in `.env`:
+
+- Quick update (same app, just new repo):
+
+```bash
+yarn build && npx aws-cdk diff
+npx aws-cdk deploy
+```
+
+- Clean rebuild (recommended for a totally different repo/org):
+
+```bash
+npx aws-cdk destroy
+yarn build && npx aws-cdk deploy
+```
+
+Ensure the PAT (secret) still has `repo` scope for the new owner/repo and that the target branch exists (`BRANCH`, default `main`).
+
 ## Security
 
 - Prefer `GITHUB_TOKEN_SECRET_NAME` over `GITHUB_TOKEN` to keep tokens out of local shells and CI logs.
