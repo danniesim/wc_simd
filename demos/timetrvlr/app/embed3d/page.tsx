@@ -648,7 +648,7 @@ export default function Embed3DPage() {
         };
         window.addEventListener("keydown", onKeyDown);
         window.addEventListener("keyup", onKeyUp);
-        window.addEventListener("focusin", onFocusIn as any);
+        window.addEventListener("focusin", onFocusIn);
 
         // Mouse look (left-drag) using quaternion orientation (no gimbal lock)
         let isDragging = false;
@@ -719,7 +719,7 @@ export default function Embed3DPage() {
             const h = containerRef.current.clientHeight;
             // Update DPR in case it changed (zoom, monitor move, etc.)
             const dpr = Math.min(window.devicePixelRatio || 1, 2);
-            if ((renderer as any).getPixelRatio?.() !== dpr) {
+            if (renderer.getPixelRatio() !== dpr) {
               renderer.setPixelRatio(dpr);
             }
             renderer.setSize(w, h, false);
@@ -814,7 +814,10 @@ export default function Embed3DPage() {
           const rollAlpha = 1 - Math.exp(-rollK * dt);
           rollVel += (desiredRollVel - rollVel) * rollAlpha;
           if (Math.abs(rollVel) > 1e-6) {
-            const qRoll = new Quaternion().setFromAxisAngle(forward, rollVel * dt);
+            const qRoll = new Quaternion().setFromAxisAngle(
+              forward,
+              rollVel * dt
+            );
             orientation = qRoll.multiply(orientation);
             if (camera) camera.quaternion.copy(orientation);
           }
@@ -982,7 +985,7 @@ export default function Embed3DPage() {
           } catch {}
           window.removeEventListener("keydown", onKeyDown);
           window.removeEventListener("keyup", onKeyUp);
-          window.removeEventListener("focusin", onFocusIn as any);
+          window.removeEventListener("focusin", onFocusIn);
           renderer?.domElement?.removeEventListener("wheel", onWheel);
           renderer?.domElement?.removeEventListener("mousedown", onMouseDown);
           window.removeEventListener("mousemove", onMouseMove);
@@ -1135,61 +1138,64 @@ export default function Embed3DPage() {
                 setQueryText(e.target.value);
               }}
               onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                (async () => {
-                  setQueryError("");
-                  setQueryPoint(null);
-                  if (!queryText.trim()) return;
-                  setQueryLoading(true);
-                  try {
-                    const resp = await fetch(`${API_PREFIX}/embed`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ texts: [queryText.trim()] }),
-                    });
-                    if (!resp.ok) {
-                      const txt = await resp.text();
-                      throw new Error(`HTTP ${resp.status}: ${txt}`);
-                    }
-                    const data = (await resp.json()) as {
-                      embeddings?: number[][];
-                      count?: number;
-                    };
-                    const v =
-                      Array.isArray(data.embeddings) && data.embeddings[0];
-                    if (!v || !Array.isArray(v))
-                      throw new Error("Invalid response");
-                    if (v.length !== 3) {
-                      throw new Error(
-                        `Backend returned ${
-                          Array.isArray(v) ? v.length : "?"
-                        }D; expected 3D. Check VAE checkpoint.`
+                if (e.key === "Enter") {
+                  (async () => {
+                    setQueryError("");
+                    setQueryPoint(null);
+                    if (!queryText.trim()) return;
+                    setQueryLoading(true);
+                    try {
+                      const resp = await fetch(`${API_PREFIX}/embed`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ texts: [queryText.trim()] }),
+                      });
+                      if (!resp.ok) {
+                        const txt = await resp.text();
+                        throw new Error(`HTTP ${resp.status}: ${txt}`);
+                      }
+                      const data = (await resp.json()) as {
+                        embeddings?: number[][];
+                        count?: number;
+                      };
+                      const v =
+                        Array.isArray(data.embeddings) && data.embeddings[0];
+                      if (!v || !Array.isArray(v))
+                        throw new Error("Invalid response");
+                      if (v.length !== 3) {
+                        throw new Error(
+                          `Backend returned ${
+                            Array.isArray(v) ? v.length : "?"
+                          }D; expected 3D. Check VAE checkpoint.`
+                        );
+                      }
+                      // Expect 3D; if higher-D, show the first 3 components
+                      const p = v.slice(0, 3).map((x) => Number(x));
+                      if (
+                        p.length !== 3 ||
+                        p.some((x) => !Number.isFinite(x))
+                      ) {
+                        throw new Error("Response is not a valid 3D vector");
+                      }
+                      setQueryPoint(p);
+                      // Map raw -> rendered space and place marker
+                      const m = meanRef.current;
+                      const sc = scaleRef.current;
+                      if (m && Number.isFinite(sc) && sc !== 0) {
+                        const nx = (p[0] - m[0]) * sc;
+                        const ny = (p[1] - m[1]) * sc;
+                        const nz = (p[2] - m[2]) * sc;
+                        updateQueryMarkerRef.current?.(nx, ny, nz);
+                      }
+                    } catch (err) {
+                      setQueryError(
+                        err instanceof Error ? err.message : String(err)
                       );
+                    } finally {
+                      setQueryLoading(false);
                     }
-                    // Expect 3D; if higher-D, show the first 3 components
-                    const p = v.slice(0, 3).map((x) => Number(x));
-                    if (p.length !== 3 || p.some((x) => !Number.isFinite(x))) {
-                      throw new Error("Response is not a valid 3D vector");
-                    }
-                    setQueryPoint(p);
-                    // Map raw -> rendered space and place marker
-                    const m = meanRef.current;
-                    const sc = scaleRef.current;
-                    if (m && Number.isFinite(sc) && sc !== 0) {
-                      const nx = (p[0] - m[0]) * sc;
-                      const ny = (p[1] - m[1]) * sc;
-                      const nz = (p[2] - m[2]) * sc;
-                      updateQueryMarkerRef.current?.(nx, ny, nz);
-                    }
-                  } catch (err) {
-                    setQueryError(
-                      err instanceof Error ? err.message : String(err)
-                    );
-                  } finally {
-                    setQueryLoading(false);
-                  }
-                })();
-              }
+                  })();
+                }
               }}
               disabled={queryLoading}
             />
@@ -1230,6 +1236,7 @@ export default function Embed3DPage() {
                     key={text}
                     role="option"
                     type="button"
+                    aria-selected={queryText === text}
                     className="block w-full text-left px-2 py-1 hover:bg-white/10"
                     onClick={() => {
                       setQueryText(text);
