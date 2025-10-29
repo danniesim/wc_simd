@@ -652,6 +652,8 @@ export default function Embed3DPage() {
         let yawAccum = 0; // radians to apply over time
         let pitchAccum = 0; // radians to apply over time
         let scrollAccum = 0; // world units to move along view-up over time
+        // Smoothed roll angular velocity (radians/sec)
+        let rollVel = 0;
         const onMouseDown = (e: MouseEvent) => {
           if (e.button !== 0) return; // left button
           isDragging = true;
@@ -793,14 +795,19 @@ export default function Embed3DPage() {
             .applyQuaternion(orientation)
             .normalize();
 
-          // Q/E roll around forward axis (apply to orientation quaternion)
-          const rollSpeed = 1.2; // radians per second
-          if (pressed.has("q") || pressed.has("e")) {
-            const sign = pressed.has("q") ? -1 : 1;
-            const qRoll = new Quaternion().setFromAxisAngle(
-              forward,
-              sign * rollSpeed * dt
-            );
+          // Q/E roll around forward axis — smoothed momentum like WASD
+          const rollSpeed = 1.2; // target radians/sec when key held
+          const desiredRollVel = pressed.has("q")
+            ? -rollSpeed
+            : pressed.has("e")
+            ? rollSpeed
+            : 0;
+          // Exponential smoothing towards desired roll velocity
+          const rollK = 8.0; // responsiveness similar to movement
+          const rollAlpha = 1 - Math.exp(-rollK * dt);
+          rollVel += (desiredRollVel - rollVel) * rollAlpha;
+          if (Math.abs(rollVel) > 1e-6) {
+            const qRoll = new Quaternion().setFromAxisAngle(forward, rollVel * dt);
             orientation = qRoll.multiply(orientation);
             if (camera) camera.quaternion.copy(orientation);
           }
