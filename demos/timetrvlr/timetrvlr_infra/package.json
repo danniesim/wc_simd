@@ -1,0 +1,28 @@
+{
+  "name": "timetrvlr-amplify-cdk",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "cdk": "cdk"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "cdk": "cdk",
+    "synth": "npm run build && cdk synth",
+    "deploy": "npm run build && cdk deploy",
+    "destroy": "npm run build && cdk destroy"
+  },
+  "dependencies": {
+    "@aws-cdk/aws-amplify-alpha": "2.221.0-alpha.0",
+    "aws-cdk-lib": "^2.221.0",
+    "constructs": "^10.3.0",
+    "dotenv": "^16.4.5",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.221.0",
+    "@types/node": "^24.9.2",
+    "typescript": "^5.6.3"
+  }
+}
