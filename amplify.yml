@@ -1,6 +1,6 @@
 version: 1
 applications:
-  - appRoot: demos/timetrvlr
+  - appRoot: demos/timetrvlr/timetrvlr_frontend
     frontend:
       phases:
         preBuild:
@@ -14,7 +14,7 @@ applications:
         # For Next.js, Amplify Hosting detects SSR automatically. Keeping .next ensures static assets are available.
         baseDirectory: .next
         files:
-          - '**/*'
+          - "**/*"
       cache:
         paths:
           - node_modules/**/*
