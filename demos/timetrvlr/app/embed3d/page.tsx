@@ -169,6 +169,8 @@ export default function Embed3DPage() {
   const [queryLoading, setQueryLoading] = useState<boolean>(false);
   const [queryError, setQueryError] = useState<string>("");
   const [queryPoint, setQueryPoint] = useState<number[] | null>(null);
+  // UI: preset dropdown open state (custom list, not filtered by input)
+  const [presetsOpen, setPresetsOpen] = useState<boolean>(false);
   // Use Next.js rewrite proxy to avoid CORS: /backend/* -> BACKEND_BASE/*
   const API_PREFIX = "/backend";
   // Multiplier for deriving near plane from current far clip (zClip)
@@ -1119,20 +1121,20 @@ export default function Embed3DPage() {
       </div>
 
       {/* Top-right: text -> /embed 3D point */}
-      <div className="absolute right-4 top-4 z-10 rounded bg-black/60 px-3 py-2 text-xs text-white w-80">
+      <div className="absolute right-4 top-4 z-10 rounded bg-black/60 px-3 py-2 text-xs text-white w-96">
         <div className="font-semibold mb-1">Text to 3D point</div>
-        <div className="flex gap-2 mb-2">
-          <input
-            list="preset-query-options"
-            className="flex-1 rounded bg-black/40 px-2 py-1 text-white outline-none border border-white/20"
-            type="text"
-            placeholder="Describe an image..."
-            aria-label="Describe an image or pick a preset"
-            value={queryText}
-            onChange={(e) => {
-              setQueryText(e.target.value);
-            }}
-            onKeyDown={(e) => {
+        <div className="flex gap-2 mb-2 items-start">
+          <div className="relative flex-1">
+            <input
+              className="w-full rounded bg-black/40 pl-2 pr-8 py-1 text-white outline-none border border-white/20"
+              type="text"
+              placeholder="Describe an image..."
+              aria-label="Describe an image or pick a preset"
+              value={queryText}
+              onChange={(e) => {
+                setQueryText(e.target.value);
+              }}
+              onKeyDown={(e) => {
               if (e.key === "Enter") {
                 (async () => {
                   setQueryError("");
@@ -1188,9 +1190,58 @@ export default function Embed3DPage() {
                   }
                 })();
               }
-            }}
-            disabled={queryLoading}
-          />
+              }}
+              disabled={queryLoading}
+            />
+            {/* Clear (X) button */}
+            <button
+              type="button"
+              aria-label="Clear"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1 text-white/80 hover:text-white disabled:opacity-40"
+              onClick={() => {
+                setQueryText("");
+                setQueryError("");
+                setQueryPoint(null);
+              }}
+              disabled={queryLoading || !queryText}
+            >
+              ×
+            </button>
+          </div>
+          {/* Presets on same row before Embed */}
+          <div className="relative">
+            <button
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded={presetsOpen}
+              className="rounded bg-white/10 hover:bg-white/20 px-2 py-1 border border-white/20"
+              onClick={() => setPresetsOpen((v) => !v)}
+              disabled={queryLoading}
+            >
+              Presets
+            </button>
+            {presetsOpen && (
+              <div
+                role="listbox"
+                className="absolute right-0 left-auto z-20 mt-1 max-h-48 w-64 overflow-auto rounded border border-white/20 bg-black/80 backdrop-blur-sm"
+              >
+                {PRESET_QUERY_TEXTS.map((text) => (
+                  <button
+                    key={text}
+                    role="option"
+                    type="button"
+                    className="block w-full text-left px-2 py-1 hover:bg-white/10"
+                    onClick={() => {
+                      setQueryText(text);
+                      setPresetsOpen(false);
+                    }}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             className="rounded bg-white/20 px-2 py-1 hover:bg-white/30 disabled:opacity-50"
             onClick={async () => {
@@ -1248,11 +1299,7 @@ export default function Embed3DPage() {
             {queryLoading ? "Embedding..." : "Embed"}
           </button>
         </div>
-        <datalist id="preset-query-options">
-          {PRESET_QUERY_TEXTS.map((text) => (
-            <option key={text} value={text} />
-          ))}
-        </datalist>
+        {/* Custom presets dropdown replaces datalist to avoid filtering */}
         {queryError && (
           <div className="text-red-400 mb-1">Error: {queryError}</div>
         )}
