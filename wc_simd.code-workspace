@@ -4,13 +4,13 @@
       "path": "."
     },
     {
-      "path": "demos/timetrvlr"
-    },
-    {
       "path": "demos/timetrvlr/timetrvlr_backend"
     },
     {
       "path": "demos/timetrvlr/timetrvlr_client"
+    },
+    {
+      "path": "demos/timetrvlr/timetrvlr_infra"
     }
   ],
   "settings": {}
