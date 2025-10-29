@@ -402,7 +402,12 @@ export default function Embed3DPage() {
           if (!planeGroup) return;
           if (!queryMarker) {
             const geom = new SphereGeometry(0.02, 16, 12);
-            const mat = new MeshBasicMaterial({ color: 0xffcc00 });
+            const mat = new MeshBasicMaterial({
+              color: 0xffcc00,
+              transparent: true,
+              opacity: 0.5,
+              depthWrite: false,
+            });
             queryMarker = new Mesh(geom, mat);
             planeGroup.add(queryMarker);
           }
