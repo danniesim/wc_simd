@@ -1,0 +1,21 @@
+version: 1
+applications:
+  - appRoot: demos/timetrvlr
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - corepack enable || true
+            - yarn install --frozen-lockfile || npm ci
+        build:
+          commands:
+            - yarn build || npm run build
+      artifacts:
+        # For Next.js, Amplify Hosting detects SSR automatically. Keeping .next ensures static assets are available.
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
