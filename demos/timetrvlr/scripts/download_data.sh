@@ -18,7 +18,7 @@ if [ "$1" == "up" ]; then
 # else if
 elif [ "$1" == "down" ]; then
     for file in "${files[@]}"; do
-        python aws/upload_to_s3.py --download "$file"
+        python aws/upload_to_s3.py --overwrite --download "$file"
     done
 # else error
 else
