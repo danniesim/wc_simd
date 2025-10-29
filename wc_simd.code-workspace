@@ -8,6 +8,9 @@
     },
     {
       "path": "demos/timetrvlr/timetrvlr_backend"
+    },
+    {
+      "path": "demos/timetrvlr/timetrvlr_client"
     }
   ],
   "settings": {}
