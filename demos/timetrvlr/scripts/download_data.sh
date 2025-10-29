@@ -12,7 +12,7 @@ source .venv/bin/activate
 # if argument is "up"
 if [ "$1" == "up" ]; then
     for file in "${files[@]}"; do
-        python aws/upload_to_s3.py "$file"
+        python aws/upload_to_s3.py --overwrite "$file"
     done
 # else if
 elif [ "$1" == "down" ]; then
