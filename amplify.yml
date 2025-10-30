@@ -5,11 +5,14 @@ applications:
       phases:
         preBuild:
           commands:
-            - corepack enable || true
-            - yarn install --frozen-lockfile || npm ci
+            - echo "Using Node 20 in frontend phase"
+            - nvm install 20
+            - nvm use 20
+            - node -v
+            - npm ci --cache .npm --prefer-offline
         build:
           commands:
-            - yarn build || npm run build
+            - npm run build
       artifacts:
         # For Next.js, Amplify Hosting detects SSR automatically. Keeping .next ensures static assets are available.
         baseDirectory: .next
