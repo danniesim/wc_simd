@@ -6,7 +6,7 @@ applications:
         preBuild:
           commands:
             - echo "Using Node 20 in frontend phase"
-            - nvm install 20
+            - nvm use 20 || nvm install 20 && nvm use 20
             - nvm use 20
             - node -v
             - npm ci --cache .npm --prefer-offline
@@ -22,3 +22,4 @@ applications:
         paths:
           - node_modules/**/*
           - .next/cache/**/*
+          - .npm/**/*
