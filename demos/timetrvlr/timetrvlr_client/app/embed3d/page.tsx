@@ -44,7 +44,7 @@ function parseNpy(buffer: ArrayBuffer): {
   // Header is a Python dict string, e.g.:
   // {'descr': '<f4', 'fortran_order': False, 'shape': (100, 3), }
   const descrMatch = header.match(/'descr'\s*:\s*'([^']+)'/);
-  const shapeMatch = header.match(/'shape'\s*:\s*\(([^\)]*)\)/);
+  const shapeMatch = header.match(/'shape'\s*:\s*\(([^)]*)\)/);
   const fortranMatch = header.match(/'fortran_order'\s*:\s*(True|False)/);
 
   if (!descrMatch || !shapeMatch || !fortranMatch) {
@@ -159,7 +159,7 @@ export default function Embed3DPage() {
   const scaleRef = useRef<number>(1.0);
   // Imperative updater to place a marker at mapped position
   const updateQueryMarkerRef = useRef<
-    ((x: number, y: number, z: number) => void) | null
+    ((_x: number, _y: number, _z: number) => void) | null
   >(null);
   // Normalized coordinates buffer (optional diagnostics)
   const coordsRef = useRef<Float32Array | null>(null);
@@ -284,25 +284,16 @@ export default function Embed3DPage() {
           maxY = -Infinity,
           maxZ = -Infinity;
         for (let i = 0; i < n; i++) {
-          coords[i * 3 + 0] -= mean[0];
-          coords[i * 3 + 1] -= mean[1];
-          coords[i * 3 + 2] -= mean[2];
-          maxAbs = Math.max(
-            maxAbs,
-            Math.abs(coords[i * 3 + 0]),
-            Math.abs(coords[i * 3 + 1]),
-            Math.abs(coords[i * 3 + 2])
-          );
-          // Track bounds for diagnostics
-          const x = coords[i * 3 + 0];
-          const y = coords[i * 3 + 1];
-          const z = coords[i * 3 + 2];
-          if (x < minX) minX = x;
-          if (y < minY) minY = y;
-          if (z < minZ) minZ = z;
-          if (x > maxX) maxX = x;
-          if (y > maxY) maxY = y;
-          if (z > maxZ) maxZ = z;
+          const xi = (coords[i * 3 + 0] -= mean[0]);
+          const yi = (coords[i * 3 + 1] -= mean[1]);
+          const zi = (coords[i * 3 + 2] -= mean[2]);
+          maxAbs = Math.max(maxAbs, Math.abs(xi), Math.abs(yi), Math.abs(zi));
+          if (xi < minX) minX = xi;
+          if (yi < minY) minY = yi;
+          if (zi < minZ) minZ = zi;
+          if (xi > maxX) maxX = xi;
+          if (yi > maxY) maxY = yi;
+          if (zi > maxZ) maxZ = zi;
         }
         if (!Number.isFinite(maxAbs) || maxAbs < 1e-9) {
           throw new Error(
@@ -491,7 +482,7 @@ export default function Embed3DPage() {
         const loader = new TextureLoader();
         (
           loader as THREE.TextureLoader & {
-            setCrossOrigin?(crossOrigin: string): void;
+            setCrossOrigin?(__: string): void;
           }
         ).setCrossOrigin?.("anonymous");
         const maxConcurrent = 4;
