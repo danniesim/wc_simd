@@ -17,6 +17,11 @@ applications:
           commands:
             - echo "Building Next.js"
             - yarn build
+      environment:
+        # Ensures Amplify monorepo build process can locate the Next.js app root
+        AMPLIFY_MONOREPO_APP_ROOT: demos/timetrvlr/timetrvlr_client
+        # Increase memory for large Next.js builds (optional)
+        NODE_OPTIONS: --max_old_space_size=4096
       artifacts:
         # For Next.js, Amplify Hosting detects SSR automatically. Keeping .next ensures static assets are available.
         baseDirectory: .next
