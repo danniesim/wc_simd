@@ -2,10 +2,7 @@
 // Target base is configured via NEXT_PUBLIC_TIMETRVLR_BACKEND_BASE (fallback: http://127.0.0.1:8001).
 const BACKEND_BASE = (process.env.NEXT_PUBLIC_TIMETRVLR_BACKEND_BASE || "http://127.0.0.1:8001").replace(/\/$/, "");
 
-// Enable standalone output so hosting (Amplify) gets a self-contained server bundle.
-// This often resolves 404 issues where the SSR handler wasn't picked up.
 const nextConfig = {
-  output: "standalone",
   async rewrites() {
     return [
       {
