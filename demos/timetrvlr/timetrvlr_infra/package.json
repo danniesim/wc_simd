@@ -11,7 +11,9 @@
     "cdk": "cdk",
     "synth": "npm run build && cdk synth",
     "deploy": "npm run build && cdk deploy",
-    "destroy": "npm run build && cdk destroy"
+    "destroy": "npm run build && cdk destroy",
+    "amplify:list-jobs": "dotenv -e .env -- bash -c 'aws amplify list-jobs --app-id \"$APP_ID\" --branch-name \"$BRANCH\"'",
+    "amplify:list-apps": "dotenv -e .env -- bash -c 'aws amplify list-apps'"
   },
   "dependencies": {
     "@aws-cdk/aws-amplify-alpha": "2.221.0-alpha.0",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "aws-cdk": "^2.221.0",
     "@types/node": "^24.9.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "dotenv-cli": "^7.4.2"
   }
 }
